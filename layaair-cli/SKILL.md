@@ -52,7 +52,7 @@ $env:LAYAAIR_INSTALL_DIR = "C:\tools\layaair"; iwr https://raw.githubusercontent
 | `create` | Create a new project from a template | `[name]` positional, `-n/--create-name`, `-p/--create-path`, `-s/--create-subdir`, `-t/--create-template`, `-l/--list-templates` |
 | `build` | Build project for a target platform | `[platform]` positional, `-t/--build-platform`, `-p/--project`, `-o/--build-out`, `-r/--build-recompile`, `-l/--list-platforms` |
 | `validate` | Validate resource files | `[files...]` positional, `-f/--validate-files`, `-p/--project` |
-| `run` | Start built-in preview server, or run a `--script` | `-p/--project`, `--script=Class.method`, `--script-args` |
+| `run` | Start built-in preview server, or run a `--script` | `-p/--project`, `--script=Class.method`, `--script-file=<file.ts>`, `--script-args` |
 
 **Global options:** `-h/--help`, `-d/--debug`, `--enable-all-panels` (load all editor/extension panels in CLI mode)
 
@@ -129,6 +129,18 @@ layaair run -p . --script=MyCLITools.exportData --script-args="/tmp/out.json"
 
 `--script-args` is a single quoted string; the CLI splits it on spaces (quote-aware) and passes each token as a positional argument.
 
+### `run --script-file` — Compile an extra TypeScript file for this run only
+
+`--script-file=<file.ts>` compiles an additional `.ts` or `.tsx` file alongside `--script`. The file is **not** imported into the project's asset database — it is only available for this invocation.
+
+```bash
+layaair run -p . --script=AX.test --script-file=/tmp/a.ts
+```
+
+- Path can be absolute or relative to the **current working directory** (not the project root).
+- Accepts comma-separated values for multiple files: `--script-file=a.ts,b.ts`
+- Must be a `.ts` or `.tsx` file; must exist on disk. The CLI throws an error otherwise.
+
 ---
 
 ## Version Management
@@ -180,6 +192,9 @@ layaair run -p .
 
 # Run a custom script function
 layaair run -p . --script=MyExporter.run --script-args="output.zip"
+
+# Run a script with an extra TypeScript file (not in the project asset database)
+layaair run -p . --script=AX.test --script-file=/tmp/a.ts
 
 # Check available flags for a subcommand
 layaair help create
