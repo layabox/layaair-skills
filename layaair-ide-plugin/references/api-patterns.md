@@ -10,7 +10,7 @@ Complete code examples for all plugin types. Read the relevant section based on 
 
 ## Table of Contents
 1. [Panel Plugin](#1-panel-plugin)
-2. [React Panel](#2-react-panel)
+2. [React Panel](#2-react-panel) — includes Built-in React Components (`IEditor.React`) and Built-in Theme Reference
 3. [Menu Plugin](#3-menu-plugin)
 4. [Dialog](#4-dialog)
 5. [Inspector Field](#5-custom-inspector-field)
@@ -157,11 +157,11 @@ The IDE build pipeline has a **built-in css-text esbuild plugin** that imports `
 **Best practices (priority order — prefer built-in first):**
 
 > **Rule: Always try the built-in theme before writing custom CSS.**
-> The base stylesheet already styles all standard HTML elements and provides component classes + layout utilities that match the editor's look. Most panels need **zero** custom CSS. Only create a custom CSS file when the built-in classes are genuinely insufficient.
+> The base stylesheet already styles all standard HTML elements and provides component classes that match the editor's look. Most panels need **zero** custom CSS. Only create a custom CSS file when the built-in classes are genuinely insufficient.
 
 | Priority | Approach | When to use | Example |
 |---|---|---|---|
-| 1st | **Built-in theme only** | Buttons, inputs, lists, tabs, panels, layout — covers most plugins | Use `<button className="primary">`, `.list-item`, `.flex.gap-2`, etc. No CSS file needed, no `adoptStyles()` call |
+| 1st | **Built-in theme only** | Buttons, inputs, tabs — covers most plugins | Use `<button className="primary">`, `.tab`, `.toolbar-icon-button`, etc. Layout via inline `style` props. No CSS file needed, no `adoptStyles()` call |
 | 2nd | **Custom CSS file** | Need a handful of plugin-specific styles beyond built-in | `import styles from './MyPlugin.css'` + `adoptStyles(styles)`. Use `var(--bg-base)` etc. to stay on-theme |
 
 **Example: Custom CSS file**
@@ -176,7 +176,7 @@ The IDE build pipeline has a **built-in css-text esbuild plugin** that imports `
 }
 ```
 
-> **Important:** For most plugins, the built-in theme classes (`.flex`, `.gap-2`, `.panel`, `button.primary` etc.) are **sufficient and preferred**. They ensure visual consistency with the editor. Only create custom CSS when the built-in classes genuinely cannot cover your needs.
+> **Important:** For most plugins, the built-in auto-styled elements (`<button>`, `<input>`, etc.) and component classes (`button.primary`, `.tab`, `.toolbar-icon-button`, etc.) are **sufficient and preferred**. They ensure visual consistency with the editor. Only create custom CSS when the built-in classes genuinely cannot cover your needs.
 
 > **Tip:** When writing custom CSS, always reference the built-in CSS variables (`var(--bg-base)`, `var(--text)`, `var(--border)`, etc.) to keep your UI consistent with the editor theme.
 
@@ -261,7 +261,7 @@ import logo from './logo.svg';
 
 function Header() {
     return (
-        <div className="flex items-center gap-2">
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <img src={icon} width={16} height={16} />
             <img src={logo} />
         </div>
@@ -285,9 +285,6 @@ CSS `url()` relative paths are also auto-resolved:
     // ...
 })
 
-// Load image in code
-let loader = new gui.GLoader();
-loader.url = "editorResources/my-plugin/icon.png";
 ```
 
 ### Using IFrame in React
@@ -319,30 +316,208 @@ function WebView({ url, visible }: { url: string; visible: boolean }) {
 }
 ```
 
-### Embedding FairyGUI Inspector in React
+### Built-in React Components (`IEditor.React`)
 
-```typescript
-function InspectorEmbed() {
-    let panel = IEditor.GUIUtils.createInspectorPanel();
-    let data = DataWatcher.watch({ name: "Data", speed: 10 });
-    panel.inspect(data, {
-        name: "DemoType",
-        properties: [
-            { name: "name", type: String },
-            { name: "speed", type: Number, min: 0, max: 100 }
-        ]
-    });
-    panel.allowUndo = true;
-    panel.resizeToFit();
+The IDE exposes ready-made React components via `IEditor.React`. They integrate with the editor's asset database, scene, i18n system, and theme automatically — no custom CSS needed.
 
-    let ref = IEditor.ReactDOM.useWidget(panel);
-    return <div ref={ref} style={{ height: panel.height }} />;
-}
+```tsx
+// Destructure for convenience
+const { EditorImage, TextInput, NumericInput, SelectInput,
+        SearchInput, ResourceInput, NodeRefInput, Popup, TooltipTarget, LocalizedText } = IEditor.React;
 ```
+
+#### Component Overview
+
+| Component | Description |
+|---|---|
+| `EditorImage` | Editor icon/image resolved from editor URL, asset UUID, file, or thumbnail URL |
+| `LocalizedText` | Translated text via `gui.Translations`; optional UBB/HTML rendering |
+| `TextInput` | Text field with multiline, password, i18n translation-key, and submitOnTyping modes |
+| `NumericInput` | Drag-to-edit number input — supports prefix/suffix, min/max, fractionDigits, mouse wheel |
+| `NumericInputWithSlider` | `NumericInput` paired with a range slider |
+| `SelectInput` | Button-style dropdown backed by a popup list |
+| `SearchInput` | Search bar with leading icon and clear button |
+| `ResourceInput` | Asset reference picker — drag-and-drop, copy/paste, context menu |
+| `NodeRefInput` | Scene node reference picker |
+| `ColorInput` | Color picker popup (supports nullable/checkable) |
+| `GradientInput` | Gradient editor popup |
+| `CurveInput` | Curve editor popup |
+| `TooltipTarget` | Wraps any element to add the editor's tooltip behavior |
+| `Popup` | General-purpose anchored popup; portals into shadow root, closes on outside click/Escape |
+
+#### EditorImage
+
+Resolves `editorResources/` paths, asset UUIDs, thumbnail URLs, and imported file URLs automatically.
+
+```tsx
+// Editor resource icon (16×16 by default)
+<EditorImage src="editorResources/my-plugin/icon.svg" />
+
+// Imported file URL
+import icon from './icon.png';
+<EditorImage src={icon} className="small-icon" />
+
+// Asset thumbnail
+<EditorImage src={Editor.assetDb.getAssetIcon(asset)} />
+
+// Show empty slot when src is missing
+<EditorImage src={maybeNull} placeholder />
+```
+
+Props: `src`, `className` (default `"small-icon"`), `iconName`, `placeholder`
+
+#### TextInput
+
+```tsx
+<TextInput
+    value={text}
+    placeholder="Enter value"
+    onCommit={next => { setText(next); return true; }}  // return false to reject
+/>
+
+// Multiline (auto-grows)
+<TextInput value={text} multiline onCommit={next => { setText(next); return true; }} />
+
+// With i18n translation-key editing
+<TextInput value={text} multiLanguage onCommit={next => { setText(next); return true; }} />
+```
+
+Props: `value`, `onCommit(value) → boolean`, `readonly`, `multiline`, `password`, `submitOnTyping`, `multiLanguage`, `placeholder`
+
+#### NumericInput
+
+Supports typing, drag-to-scrub, and mouse-wheel stepping (while focused).
+
+```tsx
+<NumericInput
+    value={speed}
+    min={0} max={100}
+    fractionDigits={1}
+    suffix="°"
+    onCommit={v => { setSpeed(v); }}  // return false to reject
+/>
+
+// With labeled prefix
+<NumericInput value={x} prefix="X" fractionDigits={3} onCommit={v => setX(v)} />
+```
+
+Props: `value`, `onCommit(value)`, `min`, `max`, `step`, `fractionDigits`, `prefix`, `suffix`, `disabled`, `className`
+
+#### NumericInputWithSlider
+
+```tsx
+<NumericInputWithSlider
+    value={opacity}
+    min={0} max={1}
+    fractionDigits={2}
+    onCommit={v => setOpacity(v)}
+/>
+```
+
+Extra props over `NumericInput`: `sliderMin`, `sliderMax`, `centeredAtOne` (symmetric mapping around 1, for scale fields)
+
+#### SelectInput
+
+```tsx
+const items = [
+    { value: "low",    label: "Low" },
+    { value: "medium", label: "Medium" },
+    { value: "high",   label: "High" },
+];
+
+<SelectInput
+    value={quality}
+    items={items}
+    onChange={(value, item) => setQuality(value)}
+/>
+
+// Async item loading on open
+<SelectInput
+    value={selected}
+    onBeforeOpen={async () => fetchItems()}   // return SelectInputOption[] to replace items
+    onChange={v => setSelected(v)}
+/>
+```
+
+Props: `value`, `items`, `onChange(value, item)`, `onBeforeOpen`, `placeholder`, `disabled`, `visibleItemCount`, `className`, `style`
+
+#### SearchInput
+
+```tsx
+const [query, setQuery] = React.useState("");
+<SearchInput value={query} onChange={setQuery} placeholder="Search..." autoFocus />
+```
+
+Props: `value`, `onChange(value)`, `placeholder`, `autoFocus`, `className`, `onKeyDown`
+
+#### ResourceInput
+
+Asset reference picker backed by the editor's asset database. Supports drag-and-drop from the Project panel, keyboard delete, and copy/paste of asset references.
+
+```tsx
+<ResourceInput
+    value={assetId}                         // asset UUID, "res://UUID", or IAssetInfo
+    typeFilter={[AssetType.Image]}          // restrict allowed types
+    onCommit={(text, asset) => setAssetId(text)}
+/>
+```
+
+Props: `value`, `onCommit(text, asset)`, `typeFilter`, `disabled`, `placeholder`, `className`, `allowInternalAssets`, `onCreate`
+
+#### NodeRefInput
+
+```tsx
+<NodeRefInput
+    value={nodeRef}              // IMyNode or serialized ref object
+    typeFilter={["Sprite"]}      // allowed node or component type names
+    onCommit={node => setNode(node)}
+/>
+```
+
+Props: `value`, `onCommit(node, compType?)`, `typeFilter`, `disabled`, `className`, `onNodeResolved`
+
+#### TooltipTarget
+
+Wraps one child element and shows an editor tooltip on hover.
+
+```tsx
+<TooltipTarget tips="Click to apply settings">
+    <button className="primary" onClick={apply}>Apply</button>
+</TooltipTarget>
+```
+
+Props: `tips` (string or i18n key; empty/null disables), `children` (single element)
+
+#### Popup
+
+General-purpose anchored popup. Portals into the shadow root so it renders above all other content. Closes on outside click or Escape.
+
+```tsx
+<Popup
+    open={open}
+    onClose={() => setOpen(false)}
+    className="select-input-popup"
+    maxHeight={200}
+    renderTrigger={({ ref }) => (
+        <button ref={ref} onClick={() => setOpen(o => !o)}>Options ▾</button>
+    )}
+>
+    <div style={{ padding: 8, display: "flex", flexDirection: "column", gap: 4 }}>
+        <button onClick={handleA}>Action A</button>
+        <button onClick={handleB}>Action B</button>
+    </div>
+</Popup>
+```
+
+Props: `open`, `onClose`, `onCancel`, `onOpen`, `renderTrigger`, `anchorRef`, `className`, `maxHeight`, `width`, `gap`, `children`
+
+---
 
 ### Built-in Theme Reference
 
 ReactDOM automatically injects a dark-theme base stylesheet into the Shadow DOM. Plugins can use these CSS variables, styled elements, and class names out of the box.
+
+> **Note:** There are no built-in layout utility classes. Use inline `style` props or a custom CSS file for layout.
 
 #### CSS Custom Properties
 
@@ -353,15 +528,20 @@ Override any variable in your own CSS via `:host { --variable: value; }`.
 | `--bg-darkest` | Deepest background layer |
 | `--bg-dark` | Dark background |
 | `--bg-base` | Standard panel background |
+| `--bg-recessed` | Recessed surface (sidebars, inset areas) |
 | `--bg-elevated` | Elevated surfaces (tooltips, popups) |
 | `--bg-surface` | Buttons, cards |
-| `--bg-hover` | Button/control hover background (NOT for list items) |
+| `--bg-hover` | Button/control hover background |
 | `--bg-pressed` | Pressed / active state |
 | `--bg-input` | Input field background |
-| `--accent` | Accent color (focus rings, checkboxes, links, selections) |
+| `--bg-header` | Section header row background |
+| `--accent` | Accent color (focus rings, checkboxes, active tabs, selections) |
 | `--accent-hover` | Accent hover state |
-| `--accent-muted` | List item / row hover background |
-| `--accent-strong` | Strong highlight (selection) |
+| `--accent-muted` | Subtle accent tint (table row hover) |
+| `--accent-strong` | Strong accent highlight (table row selection) |
+| `--list-item-over` | List item hover background |
+| `--list-item-selected` | List item selected (panel focused) |
+| `--list-item-selected-blur` | List item selected (panel unfocused) |
 | `--primary` | Primary button background |
 | `--primary-hover` | Primary button hover |
 | `--primary-text` | Primary button text |
@@ -370,13 +550,21 @@ Override any variable in your own CSS via `:host { --variable: value; }`.
 | `--text-muted` | Secondary text (placeholders, inactive hints) |
 | `--text-disabled` | Disabled text |
 | `--border` | Default border color |
-| `--border-light` | Light border |
+| `--border-subtle` | Very subtle border |
+| `--border-light` | Light / visible border |
 | `--border-hover` | Border on hover |
+| `--status-warning` | Warning semantic color |
+| `--status-error` | Error semantic color |
+| `--status-error-bright` | Bright error (inline error text) |
+| `--shadow-color-medium` | Medium shadow (panels, cards) |
+| `--shadow-color-strong` | Strong shadow (popup menus, dropdowns) |
 | `--radius` | Default border radius |
 | `--radius-lg` | Large radius (inputs, primary button) |
 | `--radius-sm` | Small radius (icon buttons) |
 | `--font-size` | Base font size |
+| `--font-size-small` | Small font size |
 | `--font-family` | Font stack |
+| `--transition` | Standard transition (`120ms ease`) |
 | `--scrollbar-size` | Scrollbar width/height |
 | `--scrollbar-thumb` | Scrollbar thumb color |
 
@@ -389,92 +577,58 @@ These elements are styled automatically — just use the raw HTML tag:
 - `<textarea>` — multi-line input, resizable
 - `<input type="checkbox">` — custom styled checkbox, accent color when checked
 - `<select>` — custom dropdown arrow
-- `<table>`, `<th>`, `<td>`, `<tr>` — styled table with hover rows
+- `<table>`, `<th>`, `<td>` — styled table
 - `<a>` — accent colored link
-- `<code>`, `<pre>` — monospace with dark background
-- `<h1>`–`<h6>` — bright text, descending sizes
-- `<hr>` — subtle divider
 
 #### Component Classes
 
 | Class | Description |
 |---|---|
-| `button.primary` / `.btn-primary` | Primary button (`--primary` blue, pressed: dark) |
-| `button.icon` / `.btn-icon` | Small square icon button, no border, transparent bg |
-| `.list-item` | List row with hover/selected states. Add `.selected` or `aria-selected="true"` |
-| `.tab` | Tab button. Add `.active` or `aria-selected="true"` for current tab |
-| `.panel` | Bordered container section |
-| `.panel-header` | Panel title bar (bold text, bottom border) |
-| `.panel-body` | Panel content area (padded) |
-| `.menu` / `[role="menu"]` | Popup menu container |
-| `.menu-item` / `[role="menuitem"]` | Menu row. Add `.disabled` or `aria-disabled="true"` |
-| `.menu-divider` / `[role="separator"]` | Menu separator line |
-| `.tooltip` / `[role="tooltip"]` | Tooltip popup |
-| `.badge` | Small rounded pill label (accent bg) |
-| `.label` | Form label (default text color, no-select) |
-
-#### Utility Classes
-
-| Class | Effect |
-|---|---|
-| `.flex` | `display: flex` |
-| `.flex-col` | `flex-direction: column` |
-| `.flex-row` | `flex-direction: row` |
-| `.flex-1` | `flex: 1; min-width: 0; min-height: 0` |
-| `.flex-wrap` | `flex-wrap: wrap` |
-| `.items-center` | `align-items: center` |
-| `.justify-between` | `justify-content: space-between` |
-| `.justify-center` | `justify-content: center` |
-| `.gap-1` / `.gap-2` / `.gap-3` | Gap: small / medium / large |
-| `.p-1` / `.p-2` / `.p-3` | Padding: small / medium / large |
-| `.px-1` / `.px-2` | Horizontal padding: small / medium |
-| `.py-1` / `.py-2` | Vertical padding: small / medium |
-| `.m-1` / `.m-2` | Margin: small / medium |
-| `.w-full` / `.h-full` | Width/height 100% |
-| `.overflow-auto` | `overflow: auto` |
-| `.overflow-hidden` | `overflow: hidden` |
-| `.truncate` | Ellipsis text overflow |
-| `.text-center` / `.text-right` | Text alignment |
-| `.text-muted` / `.text-bright` | Muted / bright text color |
-| `.text-sm` / `.text-lg` | Smaller / larger font size |
-| `.hidden` | `display: none` |
-| `.pointer` | `cursor: pointer` |
-| `.select-none` | `user-select: none` |
+| `button.primary` | Primary CTA button (`--primary` blue background) |
+| `button.icon` / `.btn-icon` | Small 22×22 icon button (transparent bg, no border by default) |
+| `.toolbar-icon-button` | 24×24 toolbar icon button; set `aria-pressed="true"` for toggled state |
+| `.tab` | Tab button; add `.active` or `aria-selected="true"` for the selected tab |
+| `.search-input` | Search bar container — wrap an icon element + `<input>` inside |
+| `.select-input` | Custom select-like trigger button (IDE select widget style) |
+| `.editor-slider` | Styled `<input type="range">` (custom track + thumb) |
+| `.numeric-input` | Drag-to-edit number input container |
+| `.text-muted` | Apply `var(--text-muted)` color |
+| `.editor-list` / `.editor-list-row` | List container + rows; add `.is-selected` or `.selected` on rows for selection highlight |
+| `.progress` / `.progress-fill` | Progress bar track and fill; add `.progress-animated` on `.progress` for animated shimmer |
+| `.ide-tooltip-content` | Tooltip popup bubble (max-width 300px) |
 
 #### Example: Using Built-in Styles
 
 ```tsx
 function SettingsPanel() {
-    let [tab, setTab] = useState("general");
+    const [tab, setTab] = React.useState("general");
     return (
-        <div className="flex-col h-full">
+        <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
             {/* Tabs */}
-            <div className="flex">
-                <button className={`tab ${tab === "general" ? "active" : ""}`}
+            <div style={{ display: "flex", borderBottom: "1px solid var(--border)" }}>
+                <button className={`tab${tab === "general" ? " active" : ""}`}
                     onClick={() => setTab("general")}>General</button>
-                <button className={`tab ${tab === "advanced" ? "active" : ""}`}
+                <button className={`tab${tab === "advanced" ? " active" : ""}`}
                     onClick={() => setTab("advanced")}>Advanced</button>
             </div>
 
-            {/* Content */}
-            <div className="flex-1 overflow-auto p-2 flex-col gap-2">
-                <div className="panel">
-                    <div className="panel-header">Settings</div>
-                    <div className="panel-body flex-col gap-2">
-                        <div className="flex items-center gap-2">
-                            <span className="label">Name</span>
-                            <input type="text" placeholder="Enter name..." />
-                        </div>
-                        <div className="flex items-center gap-2">
-                            <input type="checkbox" id="enabled" />
-                            <label htmlFor="enabled">Enable feature</label>
-                        </div>
-                        <div className="flex gap-1 justify-between">
-                            <button>Cancel</button>
-                            <button className="primary">Save</button>
-                        </div>
-                    </div>
+            {/* Content — raw elements auto-styled */}
+            <div style={{ flex: 1, overflow: "auto", padding: 8, display: "flex", flexDirection: "column", gap: 8 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <label style={{ minWidth: 80, color: "var(--text-muted)" }}>Name</label>
+                    <input type="text" placeholder="Enter name..." />
                 </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <input type="checkbox" id="enabled" />
+                    <label htmlFor="enabled">Enable feature</label>
+                </div>
+            </div>
+
+            {/* Footer */}
+            <div style={{ display: "flex", gap: 6, justifyContent: "flex-end",
+                          padding: "8px 10px", borderTop: "1px solid var(--border)" }}>
+                <button>Cancel</button>
+                <button className="primary">Save</button>
             </div>
         </div>
     );

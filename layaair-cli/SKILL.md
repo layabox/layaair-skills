@@ -13,30 +13,50 @@ The information below covers all current flags and behavior. If you need to conf
 
 The install script sets up a **dispatcher only** — you must also install at least one CLI version before `layaair` is usable.
 
+### macOS / Linux
+
 ```bash
-# Step 1: install the dispatcher + shim (goes to ~/.layaair/)
-curl -fsSL https://ldc-1251285021.file.myqcloud.com/layaair3/install.sh | bash
+# One-liner: install dispatcher + latest CLI runtime
+curl -fsSL https://raw.githubusercontent.com/layabox/layaair-cli/master/install.sh | bash && ~/.layaair/layaair install
 
-# Step 2: install a CLI version (open a new terminal first, or prefix with ~/.layaair/)
-layaair install          # latest
-layaair install 3.4.0   # specific version
+# Specific version
+curl -fsSL https://raw.githubusercontent.com/layabox/layaair-cli/master/install.sh | bash && ~/.layaair/layaair install 3.4.0
 
-# One-liner
-curl -fsSL https://ldc-1251285021.file.myqcloud.com/layaair3/install.sh | bash && ~/.layaair/layaair install 3.4.0
+# Custom install directory
+curl -fsSL https://raw.githubusercontent.com/layabox/layaair-cli/master/install.sh | LAYAAIR_INSTALL_DIR=/opt/layaair bash && /opt/layaair/layaair install
 ```
 
 **Requirements:** Node.js v20+, `unzip` command.
+
+### Windows (PowerShell)
+
+```powershell
+# One-liner: install dispatcher + latest CLI runtime
+iwr https://raw.githubusercontent.com/layabox/layaair-cli/master/install.ps1 | iex; layaair install
+
+# Specific version
+iwr https://raw.githubusercontent.com/layabox/layaair-cli/master/install.ps1 | iex; & "$env:USERPROFILE\.layaair\layaair.cmd" install 3.4.0
+
+# Custom install directory
+$env:LAYAAIR_INSTALL_DIR = "C:\tools\layaair"; iwr https://raw.githubusercontent.com/layabox/layaair-cli/master/install.ps1 | iex; & "C:\tools\layaair\layaair.cmd" install
+```
+
+**Requirements:** Node.js v20+. Default install path: `%USERPROFILE%\.layaair`.
 
 ---
 
 ## Subcommands Overview
 
-| Subcommand | Purpose | Key flags (read `layaair help` for full list) |
+| Subcommand | Purpose | Key flags (read `layaair help <cmd>` for full list) |
 |------------|---------|----------------------------------------------|
-| `create` | Create a new project from a template | `--create-name` (required), `--create-path`, `--create-subdir`, `--create-template`, `--list-templates` |
-| `build` | Build project for a target platform | `--build-platform` (required), `--build-out`, `--build-recompile`, `--list-platforms` |
-| `validate` | Validate resource files | `--validate-files` (comma-separated, required) |
-| (no subcommand) | Start built-in preview server, or run a `--script` | `--project`, `--script=Class.method`, `--script-args`, `--debug` |
+| `create` | Create a new project from a template | `[name]` positional, `-n/--create-name`, `-p/--create-path`, `-s/--create-subdir`, `-t/--create-template`, `-l/--list-templates` |
+| `build` | Build project for a target platform | `[platform]` positional, `-t/--build-platform`, `-p/--project`, `-o/--build-out`, `-r/--build-recompile`, `-l/--list-platforms` |
+| `validate` | Validate resource files | `[files...]` positional, `-f/--validate-files`, `-p/--project` |
+| `run` | Start built-in preview server, or run a `--script` | `-p/--project`, `--script=Class.method`, `--script-args` |
+
+**Global options:** `-h/--help`, `-d/--debug`, `--enable-all-panels` (load all editor/extension panels in CLI mode)
+
+The `run` subcommand can also be invoked without spelling it out: `layaair [options]` is equivalent to `layaair run [options]`.
 
 ---
 
@@ -47,6 +67,8 @@ curl -fsSL https://ldc-1251285021.file.myqcloud.com/layaair3/install.sh | bash &
 When the user asks for a specific template type, **do NOT read files from `~/.layaair/` or the installation directory** to find template names. Always get the live template list from the CLI:
 
 ```bash
+layaair create -l
+# or
 layaair create --list-templates
 ```
 
@@ -55,9 +77,9 @@ This prints all available templates (builtin, cloud, local). Use the exact Engli
 **Network access required for full list:** `--list-templates` fetches the cloud template catalog at startup. Without network access, only builtin templates and previously-downloaded cloud templates (local cache) are shown — cloud-only entries that haven't been downloaded yet will be missing. If running in a sandboxed environment, grant network access before listing or creating from a cloud template.
 
 **Workflow when user specifies a template type:**
-1. Run `layaair create --list-templates` to get the live list
+1. Run `layaair create -l` to get the live list
 2. Match the user's intent to a template display name
-3. Run `layaair create --create-name=<name> --create-template="<exact display name>"`
+3. Run `layaair create <name> -t "<exact display name>"` (or `layaair create -n <name> -t "<exact display name>"`)
 
 ### `create` — No post-create steps needed
 After `layaair create` succeeds, the project is ready. **Do NOT automatically run `layaair build`, start the preview server, or any other command as a follow-up.** Each of these is an independent workflow that the user will invoke explicitly when they need it — do not chain them onto a create unless the user specifically asked for it.
@@ -65,26 +87,31 @@ After `layaair create` succeeds, the project is ready. **Do NOT automatically ru
 ### `create` — Default is direct in the target directory
 `--create-subdir` defaults to `false`, meaning project files go directly into the target directory. **Do NOT add `--create-subdir` unless the user explicitly asks for a subdirectory.** Most users want files in the current/target directory directly.
 
-### `build` — `--build-platform` is required; use `--list-platforms` to discover options
-`--build-platform` is now required. Omitting it causes an error. To see valid platform names for a project:
+### `build` — platform is positional; use `-l` to discover options
+
+Platform can be passed as a positional argument or via `-t/--build-platform`. To see valid platform names for a project:
 
 ```bash
+layaair build -l
+# or
 layaair build --project=<path> --list-platforms
 ```
 
-### No subcommand — Built-in preview server
+### `run` — Built-in preview server or script runner
 
-Running `layaair` (or `layaair --project=<path>`) **without any subcommand and without `--script`** starts the built-in HTTP/HTTPS preview server. No external web server is needed.
+`layaair run` (or just `layaair`) **without `--script`** starts the built-in HTTP/HTTPS preview server. No external web server is needed.
 
 ```bash
-layaair --project=/path/to/myproject
+layaair run -p /path/to/myproject
+# equivalent shorthand:
+layaair -p /path/to/myproject
 ```
 
 The server port is read from the project's EditorSettings. Once running, open the printed URL in a browser to preview the project.
 
 **Note:** The preview server binds to a TCP port. If running in a sandboxed environment, make sure the sandbox allows outbound/inbound port binding before starting the server.
 
-### `--script` — Run any registered class method
+### `run --script` — Run any registered class method
 The `--script=ClassName.methodName` flag executes a static method on a class registered in the project. It works for **user/plugin code** — any class registered with `@IEditorEnv.regClass()` is callable:
 
 ```typescript
@@ -97,7 +124,7 @@ export class MyCLITools {
 ```
 
 ```bash
-layaair --project=. --script=MyCLITools.exportData --script-args="/tmp/out.json"
+layaair run -p . --script=MyCLITools.exportData --script-args="/tmp/out.json"
 ```
 
 `--script-args` is a single quoted string; the CLI splits it on spaces (quote-aware) and passes each token as a positional argument.
@@ -121,34 +148,42 @@ The dispatcher auto-selects the newest installed version. It also reads the proj
 ## Quick Reference
 
 ```bash
-# Install
-curl -fsSL https://ldc-1251285021.file.myqcloud.com/layaair3/install.sh | bash && ~/.layaair/layaair install
+# Install (macOS/Linux)
+curl -fsSL https://raw.githubusercontent.com/layabox/layaair-cli/master/install.sh | bash && ~/.layaair/layaair install
+# Install (Windows PowerShell)
+# iwr https://raw.githubusercontent.com/layabox/layaair-cli/master/install.ps1 | iex; layaair install
 
 # List available templates (do this before --create-template)
-layaair create --list-templates
+layaair create -l
 
-# Create a project (default template)
-layaair create --create-name=MyGame
+# Create a project (default template, positional name)
+layaair create MyGame
 
 # Create with a specific template
-layaair create --create-name=MyGame --create-template="2D empty project"
+layaair create MyGame -t "2D empty project"
 
 # List valid build platforms for a project
-layaair build --project=. --list-platforms
+layaair build -l
 
-# Build for web
-layaair build --build-platform=web
+# Build for web (positional platform)
+layaair build web
 
-# Validate files
-layaair validate --validate-files=main.ls,ui.lh
+# Build for web specifying project path
+layaair build web -p /tmp/demo
+
+# Validate files (positional args)
+layaair validate assets/main.lh assets/player.lprefab
 
 # Start built-in preview server (no external web server needed)
 # Note: requires sandbox to allow port binding
-layaair --project=.
+layaair run -p .
 
 # Run a custom script function
-layaair --project=. --script=MyExporter.run --script-args="output.zip"
+layaair run -p . --script=MyExporter.run --script-args="output.zip"
 
-# Check available flags for any subcommand
-layaair help
+# Check available flags for a subcommand
+layaair help create
+layaair help build
+layaair help validate
+layaair help run
 ```
