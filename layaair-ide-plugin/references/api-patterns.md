@@ -323,7 +323,8 @@ The IDE exposes ready-made React components via `IEditor.React`. They integrate 
 ```tsx
 // Destructure for convenience
 const { EditorImage, TextInput, NumericInput, SelectInput,
-        SearchInput, ResourceInput, NodeRefInput, Popup, TooltipTarget, LocalizedText } = IEditor.React;
+        SearchInput, ResourceInput, NodeRefInput, Popup, TooltipTarget,
+        LocalizedText, ResizeHandle } = IEditor.React;
 ```
 
 #### Component Overview
@@ -344,6 +345,7 @@ const { EditorImage, TextInput, NumericInput, SelectInput,
 | `CurveInput` | Curve editor popup |
 | `TooltipTarget` | Wraps any element to add the editor's tooltip behavior |
 | `Popup` | General-purpose anchored popup; portals into shadow root, closes on outside click/Escape |
+| `ResizeHandle` | Draggable divider for resizable layouts; supports vertical/horizontal, keyboard, and double-click reset |
 
 #### EditorImage
 
@@ -510,6 +512,50 @@ General-purpose anchored popup. Portals into the shadow root so it renders above
 ```
 
 Props: `open`, `onClose`, `onCancel`, `onOpen`, `renderTrigger`, `anchorRef`, `className`, `maxHeight`, `width`, `gap`, `children`
+
+#### ResizeHandle
+
+A draggable divider for building resizable panel layouts. Handles pointer capture, cross-iframe drag, keyboard arrow keys, and double-click reset. CSS classes `resize-handle` and `resize-handle-vertical` / `resize-handle-horizontal` are applied automatically; style with `cursor`, `className`, or `style` props.
+
+```tsx
+const [width, setWidth] = useState(200);
+
+// Vertical handle (drags left/right to resize a column)
+<div style={{ display: "flex" }}>
+    <div style={{ width }}>Left panel</div>
+    <ResizeHandle
+        orientation="vertical"
+        value={width}
+        min={100}
+        max={400}
+        onResize={setWidth}
+        onReset={() => setWidth(200)}
+    />
+    <div style={{ flex: 1 }}>Right panel</div>
+</div>
+
+// Horizontal handle (drags up/down)
+<ResizeHandle
+    orientation="horizontal"
+    value={height}
+    min={80}
+    onResize={setHeight}
+/>
+```
+
+Key props:
+
+| Prop | Type | Description |
+|---|---|---|
+| `orientation` | `"vertical" \| "horizontal"` | Drag axis. Vertical = left/right arrows; horizontal = up/down arrows |
+| `onResize` | `(value: number) => void` | Called with the new clamped value on every pointer move |
+| `onResizeStart` | `(event) => { value, min?, max? } \| false \| void` | Override starting value/bounds; return `false` to cancel drag |
+| `onReset` | `() => void` | Called on double-click or Enter key |
+| `value` | `number` | Current size (passed to ARIA and used as keyboard baseline) |
+| `min` / `max` | `number` | Clamp range |
+| `keyboardStep` | `number` | Arrow key step size (default `10`) |
+| `reverse` | `boolean` | Invert drag direction (useful for right/bottom anchored panels) |
+| `disabled` | `boolean` | Disables drag and keyboard interaction |
 
 ---
 
