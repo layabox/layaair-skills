@@ -1,6 +1,6 @@
 ---
 name: layaair-ide-plugin
-description: "Create LayaAir IDE editor plugins (extensions). TRIGGER when: user asks to create/build/write a plugin, panel, editor panel, menu, inspector field, build plugin, asset processor, custom editor, scene hook, gizmo, or any editor extension. Also trigger when user mentions LayaAir/Laya/laya, @IEditor, @IEditorEnv, EditorPanel, panel/面板, or wants to extend the IDE. Chinese triggers: 编辑器插件, 编辑器面板, 插件面板, 面板插件, 写一个面板, 写个插件. This project IS the LayaAir IDE — any request to write an editor plugin or panel in this repo should use this skill."
+description: "Create LayaAir IDE editor plugins (extensions), using React by default for panels, dialogs, settings, previews, and other editor UI. TRIGGER when: user asks to create/build/write a plugin, React panel, editor panel, dialog, menu, inspector UI, node graph, state graph, timeline editor, build plugin, asset processor, custom editor, scene hook, gizmo, or any editor extension. Also trigger when user mentions LayaAir/Laya/laya, @IEditor, @IEditorEnv, IEditor.React, FileInput, FontInput, IEditor.ReactDOM, IEditor.Flow, IEditor.IFlow, IEditor.StateGraph, IEditor.IStateGraph, IEditor.Timeline, IEditor.ITimeline, EditorPanel, panel/面板, or wants to extend the IDE. Chinese triggers: 编辑器插件, 编辑器面板, React面板, 节点图, 状态图, 时间轴, 插件面板, 面板插件, 写一个面板, 写个插件. This project IS the LayaAir IDE — any request to write an editor plugin or panel in this repo should use this skill."
 ---
 
 # LayaAir IDE Plugin Development Skill
@@ -20,16 +20,18 @@ Scripts compile to: `bundle.editor.js` (UI), `bundle.scene.js` (Scene), `bundle.
 
 Plugins are created in **user projects**, not in the IDE source. Plugin scripts can be placed **anywhere under the project's `assets/` directory** — there is no required directory structure. The IDE automatically compiles scripts with `@IEditor.*` or `@IEditorEnv.*` decorators into the corresponding bundles.
 
-One convention: place editor-only resources (icons, widgets, locales) in an `editorResources/` folder — files there are excluded from the game build.
+Place editor-only resources (icons, styles, locales) under a plugin-specific subdirectory such as `editorResources/my-plugin/`; files under `editorResources/` are excluded from the game build. Do not place plugin resources directly in the shared `editorResources/` root, because names can collide. The physical directory containing `editorResources/` may be anywhere under `assets/`. When using a relative editor-resource path with an editor API that supports it, omit every physical prefix segment and begin at `editorResources/`, for example `editorResources/my-plugin/icon.svg`. This logical relative path is not suitable for Node.js filesystem IO.
 
 ## Step-by-Step: Creating a Plugin
 
 ### 1. Ask the user what type of plugin they need
 
 Common plugin types:
-- **Panel plugin**: Custom editor panel (most common)
+- **Panel plugin**: React editor panel (most common)
 - **Menu plugin**: Add menu items to the editor
 - **Inspector plugin**: Custom property fields in Inspector
+- **Graph plugin**: Port-based node graphs with `IEditor.Flow`, or state-machine graphs with `IEditor.StateGraph`
+- **Timeline plugin**: Track, keyframe, event, curve, or interval editing with `IEditor.Timeline`
 - **Build plugin**: Extend the build pipeline
 - **Asset plugin**: Custom asset types with import/export/preview
 - **Scene hook plugin**: React to scene events (node creation, save, etc.)
@@ -42,35 +44,43 @@ Read `references/api-patterns.md` for the complete API reference with code examp
 ## Key Rules
 
 1. **Decorator placement matters**: `@IEditor.*` = UI process only, `@IEditorEnv.*` = Scene process only
-2. **Panel class** must extend `IEditor.EditorPanel` and implement `async create()` returning `this._panel`
-3. **Dialog class** must extend `IEditor.Dialog` and set `this.contentPane`
-4. **Inspector field** must extend `IEditor.PropertyField` and implement `create()` + `refresh()`
-5. **Build plugin** must implement `IEditorEnv.IBuildPlugin` interface
-6. **Settings location**: `"project"` (shared), `"local"` (gitignored), `"application"` (global), `"memory"` (transient)
-7. **editorResources/** directory: assets here are NOT published to the game build
-8. **Cross-process calls**: UI calls Scene via `Editor.scene.runScript("ClassName.method", ...args)`, Scene calls UI via `EditorEnv.sendMessageToPanel("PanelName", "method")`
-9. **React panels**: React is built-in to the IDE — just `import` and use, no `npm install` needed. Use `IEditor.ReactDOM`, call `adoptStyles()` for CSS, `makeFullSize()` to fill parent, `render(<App/>)` to mount. The IDE also provides ready-made editor-integrated React components via `IEditor.React`: `EditorImage`, `TextInput`, `NumericInput`, `NumericInputWithSlider`, `SelectInput`, `SearchInput`, `ResourceInput`, `NodeRefInput`, `ColorInput`, `GradientInput`, `CurveInput`, `TooltipTarget`, `Popup`, `LocalizedText`, `ResizeHandle`. See `api-patterns.md` §2 "Built-in React Components" for full API. Only prerequisite: ensure `"jsx": "react-jsx"` is set in tsconfig (see rule 11)
-10. **CSS workflow**: ReactDOM auto-injects a base dark-theme stylesheet with CSS variables and styled HTML elements (`<button>`, `<input>`, `<select>`, etc.). Available component classes: `button.primary`, `button.icon`/`.btn-icon`, `.toolbar-icon-button`, `.tab`, `.search-input`, `.editor-slider`, `.text-muted`, `.editor-list`/`.editor-list-row`, etc. **No built-in layout utility classes exist** — use inline `style` props for layout. **Always prefer the built-in theme first** — most panels need zero custom CSS. Only create a custom CSS file when the built-in classes are insufficient. `import styles from './Foo.css'` returns CSS as a string (via built-in esbuild css-text plugin), pass to `reactDOM.adoptStyles(styles)`. See `api-patterns.md` §2 "Built-in Theme Reference" for the full variable/class list.
-11. **TypeScript config**: Must have `"experimentalDecorators": true` and `"jsx": "react-jsx"` (for React). React runtime is built-in — `import { useState } from "react"` works directly with no `npm install react`. However, TypeScript needs type definitions to compile: add `"@types/react"` and `"@types/react-dom"` to `devDependencies` in `package.json` (`npm install --save-dev @types/react @types/react-dom`).
-12. **Images**: Two approaches depending on UI mode. **React panels**: `import icon from './icon.png'` returns an absolute `file://` URL string, use in JSX `<img src={icon} />`; CSS `url(./icon.png)` also auto-resolved (supported: png, jpg, gif, svg, webp, ico, bmp). **Built-in UI (FairyGUI)**: use `editorResources/` paths directly, e.g. `"editorResources/my-plugin/icon.svg"`. Editor-only images should always go in `editorResources/` to exclude from game build.
-13. **IFrame**: Never use raw `<iframe>` HTML element. Always use `IEditor.WebIFrame` instead. In React, create the instance once via `useRef` + `useCallback`, append its `.element` to a container div. When hiding, use `display:none` — do NOT remove from DOM (avoids reload/state loss).
-14. **Node.js modules**: Node built-in modules (`fs`, `path`, `child_process`, etc.) are available in the IDE — just `import` and use, no install needed.
-15. **Renaming scripts**: When renaming a script file, always rename the corresponding `.meta` file as well (e.g. rename `Foo.ts` → `Bar.ts`, must also rename `Foo.ts.meta` → `Bar.ts.meta`). The `.meta` file stores the asset UUID and must stay paired with its file.
-16. **Type name uniqueness**: `Editor.typeRegistry.addTypes` 和 `InspectorPanel.inspect` 中传入的类型名（`name` 字段）在全局类型注册表中必须唯一，否则会与其他插件冲突。命名时加上插件专属前缀，例如 `"MyPlugin_SettingsType"` 而非 `"SettingsType"`。
-17. **Panel ID uniqueness**: `@IEditor.panel(id, ...)` 的 `id` 是全局唯一标识符，简短通用的名字（如 `"MyPanel"`、`"Settings"`）容易与其他插件冲突。建议使用带插件/公司前缀的复杂名字，例如 `"MyCompany.ProjectManager.MainPanel"` 而非 `"MainPanel"`。
+2. **Editor UI defaults to React**: Build panels, dialogs, settings, and previews with `IEditor.ReactDOM` and `IEditor.React`. Do not generate widget packages or programmatic non-React UI unless the user explicitly requests legacy compatibility.
+3. **Panel class** must extend `IEditor.EditorPanel`; create an `IEditor.ReactDOM`, mount it in `this._panel`, render JSX, and call `dispose()` in `onDestroy()`
+4. **Dialog class** must extend `IEditor.Dialog<IEditor.ReactDOM>`, assign an `IEditor.ReactDOM` to `this.contentPane`, render JSX, and dispose it with the dialog
+5. **Inspector field** must extend `IEditor.PropertyField` and implement `create()` + `refresh()`; prefer the built-in React inspector components for plugin-owned forms
+6. **Build plugin** must implement `IEditorEnv.IBuildPlugin` interface
+7. **Settings location**: `"project"` (shared), `"local"` (gitignored), `"application"` (global), `"memory"` (transient)
+8. **editorResources namespace and path forms**: Assets here are NOT published to the game build. Always create a plugin-specific subdirectory such as `editorResources/my-plugin/`; never put plugin files directly in the shared root. If an editor API supports relative editor-resource paths, begin the value with `editorResources/` and strip every directory before that segment. Do not pass this logical relative path to Node.js filesystem APIs. For Node.js IO, resolve it with `const asset = await Editor.assetDb.getAsset("editorResources/...", true)`—the second argument is required—then obtain the absolute path with `Editor.assetDb.getFullPath(asset)`.
+9. **Cross-process calls**: UI calls Scene via `Editor.scene.runScript("ClassName.method", ...args)`, Scene calls UI via `EditorEnv.sendMessageToPanel("PanelName", "method")`
+10. **React runtime, components, graphs, and Timeline**: React is built in; import it without installing the runtime. Use `IEditor.React` for editor-integrated controls, `IEditor.Flow` for port-based node graphs, `IEditor.StateGraph` for pinless state-machine graphs, and `IEditor.Timeline` for track/key/event/range editing. These are sibling runtime namespaces; use `IEditor.IFlow`, `IEditor.IStateGraph`, and `IEditor.ITimeline` for their TypeScript interfaces. Read `references/api-patterns.md` §2 before generating UI so the current APIs and props are used.
+11. **Tool buttons with tips**: If a toolbar/icon button needs tips, use `<ToolButton title="...">`; do not put a native `title` on `<button>` for that purpose. `ToolButton` consumes `title`, uses the editor tooltip system, suppresses Chromium's native tooltip, and groups adjacent tooltips for fast traversal. A tool button without tips can use a normal `<button>`. Use `TooltipTarget` for tips on non-button elements.
+12. **Theme workflow**: `IEditor.ReactDOM` injects both dark and light theme tokens plus the base component styles. Prefer semantic CSS variables and built-in classes; do not hard-code dark colors. Use `--toggle-button-selected-bg` / `--toggle-button-selected-text` for persistent `aria-pressed` states and the current `--timeline-*` tokens for Timeline skins. There are no layout utility classes, so use inline layout styles or a small imported CSS file passed to `adoptStyles()`. Read the theme source/type declarations when a token is not documented.
+13. **Standalone icons across themes**: If the same standalone monochrome/editor icon must work in both dark and light modes, apply `filter: var(--ui-icon-filter);` to its custom `<img>`, standalone `EditorImage`, or background-image style. The token is `none` in dark mode and darkens the icon in light mode. Built-in toolbar/icon selectors already apply it to their nested `EditorImage`; do not apply it twice.
+14. **TypeScript config**: Must have `"experimentalDecorators": true` and `"jsx": "react-jsx"`. React runtime is built in, but TypeScript compilation needs `"@types/react"` and `"@types/react-dom"` in `devDependencies`.
+15. **Images**: In React, `import icon from "./icon.png"` returns an absolute `file://` URL string; use it in JSX or CSS. Supported formats: png, jpg, gif, svg, webp, ico, bmp. Keep editor-only images under the plugin's own `editorResources/<plugin-name>/` directory.
+16. **IFrame**: Never use a raw `<iframe>`. Create one `IEditor.WebIFrame` with `useRef` + a callback ref, append its `.element` to a React container, and hide with `display:none` instead of removing it from the DOM.
+17. **Node.js modules**: Node built-in modules (`fs`, `path`, `child_process`, etc.) are available in the IDE — import and use them without installing packages.
+18. **Renaming scripts**: When renaming a script file, always rename the paired `.meta` file so its asset UUID remains attached.
+19. **Type name uniqueness**: Type names passed to `Editor.typeRegistry.addTypes` and `InspectorPanel.inspect` (the `name` field) share the global type registry and must be unique. Use a plugin-specific prefix, such as `"MyPlugin_SettingsType"`.
+20. **Panel ID uniqueness**: The `id` passed to `@IEditor.panel(id, ...)` is globally unique. Use a plugin- or company-specific prefix, such as `"MyCompany.ProjectManager.MainPanel"`.
+21. **Type caption localization**: Write English type/property labels directly in each descriptor's `caption`; only Chinese needs an additional translation map. Before `Editor.typeRegistry.addTypes()`, assign each Chinese entry to the matching descriptor's `captionTranslation` by `type.name`; `"#"` is the type caption and property-name keys are property captions. Treat translations as an already-loaded map. See `references/api-patterns.md` §18.
+22. **Menu instance lifecycle**: Never call anonymous `IEditor.Menu.create([...])` inside click, pointer, context-menu, or other repeated interaction handlers. Cache the menu instance, or lazily reuse a globally unique plugin-prefixed ID with `IEditor.Menu.getById(id) ?? IEditor.Menu.create(id, template)`. Repeated `create()` with the same ID throws. Give menu items stable IDs; update the reused menu with `setItems()`, `setItemEnabled()`, `setItemVisible()`, `setItemChecked()`, or `setItemLabel()`, then call `show()`. See `references/api-patterns.md` §3.
 
 ## Full API Reference
 
 For the complete API beyond what `references/api-patterns.md` covers, read the type declaration files in the project's `engine/types` directory:
 - **editor.d.ts** — UI process API (`IEditor` namespace, global `Editor` object)
 - **editor-env.d.ts** — Scene process API (`IEditorEnv` namespace, global `EditorEnv` object)
-- **editor-ui.d.ts** — Editor UI library (`IEditorUI` namespace, FairyGUI components)
+- **IReactComponents / `IEditor.React` declarations** — current public React components, props, theme helpers, and interaction utilities
+- **IFlow / `IEditor.IFlow` declarations** — port-based graph data, registries, store, commands, and `IEditor.Flow` runtime values
+- **IStateGraph / `IEditor.IStateGraph` declarations** — state-machine nodes, edges, callbacks, and `IEditor.StateGraph` runtime values
+- **ITimeline / `IEditor.ITimeline` declarations** — mutable Timeline documents, view state, actions, split handles, snapshots, commands, range/key/event types, and `IEditor.Timeline` runtime values
 
 ## Output Format
 
 When creating a plugin, always:
-1. Ask the user where to place the plugin files (anywhere under project `assets/` is valid)
+1. Place plugin files under the user project's `assets/` directory; ask only when the intended location cannot be inferred
 2. Include proper decorators and type annotations
-3. Put editor-only resources (icons, widgets) in `editorResources/` directory
+3. Put editor-only resources (icons, styles, locales) in a plugin-specific `editorResources/<plugin-name>/` directory, never directly in the shared root; use `editorResources/...` only as a logical relative path for supporting editor APIs, and resolve an absolute path before Node.js filesystem IO
 4. Add i18n support if the plugin has user-visible strings
-5. Explain which process each file runs in (UI vs Scene)
+5. Use React for editor UI and explain which process each file runs in (UI vs Scene)

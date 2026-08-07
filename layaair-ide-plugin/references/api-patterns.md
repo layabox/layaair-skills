@@ -8,9 +8,32 @@ Complete code examples for all plugin types. Read the relevant section based on 
 > 
 > 下面示例中的类型名仅作演示，实际开发时请替换为带前缀的名称。
 
+> **Important: Namespace editor resources**
+>
+> Create a plugin-specific subdirectory such as `editorResources/my-plugin/` and keep all plugin icons, styles, locales, and other editor-only assets inside it. Do not place plugin resources directly in the shared `editorResources/` root, where names can collide with other plugins.
+>
+> The physical prefix before `editorResources/` may be anywhere under `assets/`. When an editor API supports a relative editor-resource path, strip that prefix and begin the relative value at `editorResources/`:
+>
+> ```text
+> Physical: assets/plugins/my-plugin/editorResources/my-plugin/icon.svg
+> Relative: editorResources/my-plugin/icon.svg
+> ```
+>
+> That relative value is an editor resource locator, not a Node.js filesystem path. For Node.js IO, resolve it to an absolute path in the UI process:
+>
+> ```ts
+> const asset = await Editor.assetDb.getAsset(
+>     "editorResources/my-plugin/icon.svg",
+>     true
+> );
+> const absolutePath = Editor.assetDb.getFullPath(asset);
+> ```
+>
+> The `true` argument is required when resolving an `editorResources/...` locator. `getAsset()` returns `IAssetInfo`; `getFullPath()` converts that asset to the absolute path required by Node.js filesystem APIs.
+
 ## Table of Contents
-1. [Panel Plugin](#1-panel-plugin)
-2. [React Panel](#2-react-panel) — includes Built-in React Components (`IEditor.React`) and Built-in Theme Reference
+1. [Panel Plugin (React)](#1-panel-plugin)
+2. [React UI Guide](#2-react-ui-guide) — includes `IEditor.React`, `IEditor.Flow`, `IEditor.StateGraph`, `IEditor.Timeline`, and the Built-in Theme Reference
 3. [Menu Plugin](#3-menu-plugin)
 4. [Dialog](#4-dialog)
 5. [Inspector Field](#5-custom-inspector-field)
@@ -27,17 +50,34 @@ Complete code examples for all plugin types. Read the relevant section based on 
 16. [Asset Database API](#16-asset-database-api)
 17. [Cross-Process Communication](#17-cross-process-communication)
 18. [I18n Support](#18-i18n-support)
-19. [Programmatic UI](#19-programmatic-ui-creation)
 
 ---
 
 ## 1. Panel Plugin
 
 **Process**: UI  
-**Use**: Custom editor panel with FairyGUI widget
+**Use**: Custom React editor panel
 
-```typescript
-@IEditor.panel("MyPanel", {
+```tsx
+import { useState } from "react";
+import styles from "./MainPanel.css";
+
+const PANEL_ID = "MyCompany.MyPlugin.MainPanel";
+
+function MainPanelView() {
+    const [name, setName] = useState("");
+    return (
+        <main style={{ height: "100%", padding: 8 }}>
+            <IEditor.React.TextInput
+                value={name}
+                placeholder="Name"
+                onCommit={value => { setName(value); return true; }}
+            />
+        </main>
+    );
+}
+
+@IEditor.panel(PANEL_ID, {
     title: "My Panel",
     icon: "editorResources/my-plugin/icon.svg",
     location: "right",        // "left"|"right"|"top"|"bottom"|"popup"|"embed"
@@ -45,11 +85,15 @@ Complete code examples for all plugin types. Read the relevant section based on 
     autoStart: false,          // Auto-open on project load
     showInMenu: true,          // Show in Panel menu
 })
-export class MyPanel extends IEditor.EditorPanel {
+export class MainPanel extends IEditor.EditorPanel {
+    private _react: IEditor.ReactDOM;
+
     async create() {
-        this._panel = await gui.UIPackage.createWidget(
-            "editorResources/my-plugin/MyPanel.widget"
-        );
+        this._react = new IEditor.ReactDOM();
+        this._react.setSize(600, 500);
+        this._react.adoptStyles(styles);
+        this._panel = this._react;
+        this._react.render(<MainPanelView />);
     }
 
     onStart() {
@@ -79,24 +123,27 @@ export class MyPanel extends IEditor.EditorPanel {
     }
 
     onDestroy() {
-        // Cleanup
+        this._react?.dispose();
     }
 }
 ```
 
-### Panel with InspectorPanel (config-driven UI)
+### Panel with React InspectorPanel (config-driven UI)
 
-```typescript
-@IEditor.panel("ConfigPanel", { title: "Config Panel" })
+`InspectorPanelModel` drives the existing metadata-based inspector fields while `InspectorPanel` renders them inside React.
+
+```tsx
+const CONFIG_TYPE = "MyCompany.MyPlugin.ConfigType";
+
+@IEditor.panel("MyCompany.MyPlugin.ConfigPanel", { title: "Config Panel" })
 export class ConfigPanel extends IEditor.EditorPanel {
-    declare _panel: IEditor.InspectorPanel;
+    private _react: IEditor.ReactDOM;
+    private _model: InstanceType<typeof IEditor.React.InspectorPanelModel>;
     private _data: any;
 
     async create() {
-        this._panel = IEditor.GUIUtils.createInspectorPanel();
-
         Editor.typeRegistry.addTypes([{
-            name: "ConfigPanelType",
+            name: CONFIG_TYPE,
             properties: [
                 { name: "text", type: "string" },
                 { name: "count", type: "number", min: 0, max: 100 },
@@ -107,42 +154,29 @@ export class ConfigPanel extends IEditor.EditorPanel {
         }]);
 
         this._data = IEditor.DataWatcher.watch({});
-        this._panel.inspect(this._data, "ConfigPanelType");
+        this._model = new IEditor.React.InspectorPanelModel();
+        this._model.allowUndo = true;
+        this._model.inspect(this._data, CONFIG_TYPE);
+
+        this._react = new IEditor.ReactDOM();
+        this._react.setSize(500, 400);
+        this._panel = this._react;
+        this._react.render(<IEditor.React.InspectorPanel model={this._model} />);
     }
-}
-```
 
-### Panel with regClass type definition
-
-```typescript
-@IEditor.regClass()
-export class MyPanelType {
-    @property(String)
-    text: string;
-
-    @property(Number)
-    count: number;
-}
-
-@IEditor.panel("TypedPanel", { title: "Typed Panel" })
-export class TypedPanel extends IEditor.EditorPanel {
-    declare _panel: IEditor.InspectorPanel;
-    private _comp: IEditor.DataComponent;
-
-    async create() {
-        this._panel = IEditor.GUIUtils.createInspectorPanel();
-        this._comp = new IEditor.DataComponent(MyPanelType);
-        this._panel.inspect(this._comp.props, MyPanelType);
+    onDestroy() {
+        this._model?.resetInspectors();
+        this._react?.dispose();
     }
 }
 ```
 
 ---
 
-## 2. React Panel
+## 2. React UI Guide
 
 **Process**: UI  
-**Use**: Modern React-based editor panel
+**Use**: Default UI stack for panels, dialogs, settings, previews, and plugin-owned forms
 
 > **React is built-in to the IDE.** Just `import { useState } from "react"` and use JSX directly — no `npm install react` needed. The only prerequisite is ensuring `"jsx": "react-jsx"` is set in the project's `tsconfig.json`.
 
@@ -182,7 +216,7 @@ The IDE build pipeline has a **built-in css-text esbuild plugin** that imports `
 
 ### Basic React Panel
 
-```typescript
+```tsx
 import styles from "./MyPlugin.css";
 
 function MyApp() {
@@ -194,20 +228,18 @@ function MyApp() {
     );
 }
 
-@IEditor.panel("MyReactPanel", {
+@IEditor.panel("MyCompany.MyPlugin.ReactPanel", {
     title: "React Panel",
     location: "right"
 })
 export class MyReactPanel extends IEditor.EditorPanel {
-    private _react: IEditor.IReactDOM;
+    private _react: IEditor.ReactDOM;
 
     async create() {
-        this._panel = new gui.Widget();
-        this._panel.setSize(600, 500);
         this._react = new IEditor.ReactDOM();
-        this._react.adoptStyles(styles);           // Inject CSS
-        this._react.makeFullSize(this._panel, true); // Fill parent
-        this._panel.addChild(this._react);
+        this._react.setSize(600, 500);
+        this._react.adoptStyles(styles);
+        this._panel = this._react;
         this._react.render(<MyApp />);
     }
 
@@ -219,7 +251,7 @@ export class MyReactPanel extends IEditor.EditorPanel {
 
 ### React with Editor Events (External Store)
 
-```typescript
+```tsx
 const selectionStore = IEditor.ReactDOM.createStore<any[]>([]);
 
 function SelectionView() {
@@ -227,15 +259,14 @@ function SelectionView() {
     return <ul>{items.map(item => <li key={item.id}>{item.name}</li>)}</ul>;
 }
 
-@IEditor.panel("SelectPanel", { title: "Selection" })
+@IEditor.panel("MyCompany.MyPlugin.SelectionPanel", { title: "Selection" })
 export class SelectPanel extends IEditor.EditorPanel {
-    private _react: IEditor.IReactDOM;
+    private _react: IEditor.ReactDOM;
 
     async create() {
-        this._panel = new gui.Widget();
         this._react = new IEditor.ReactDOM();
-        this._react.makeFullSize(this._panel, true);
-        this._panel.addChild(this._react);
+        this._react.setSize(600, 500);
+        this._panel = this._react;
         this._react.render(<SelectionView />);
     }
 
@@ -250,7 +281,9 @@ export class SelectPanel extends IEditor.EditorPanel {
 
 ### Using Images
 
-Two approaches depending on UI mode. Editor-only images should always go in `editorResources/` to exclude from game build.
+Editor-only images should live under a plugin-specific directory such as `editorResources/my-plugin/` so they are excluded from the game build and cannot collide with other plugins. Do not place them directly in the shared `editorResources/` root.
+
+When a component or editor API accepts a relative editor-resource path, pass it from the `editorResources/` segment onward. Omit `assets/`, plugin folders, package folders, and every other physical prefix. Do not use that relative value with Node.js filesystem APIs.
 
 Supported formats: `.png`, `.jpg`, `.gif`, `.svg`, `.webp`, `.ico`, `.bmp`.
 
@@ -262,8 +295,8 @@ import logo from './logo.svg';
 function Header() {
     return (
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <img src={icon} width={16} height={16} />
-            <img src={logo} />
+            <EditorImage src={icon} />
+            <EditorImage src={logo} />
         </div>
     );
 }
@@ -274,18 +307,12 @@ CSS `url()` relative paths are also auto-resolved:
 .icon-btn {
     background-image: url(./icon.png);
     background-size: 16px 16px;
+    /* Apply when this same icon must work in both dark and light modes. */
+    filter: var(--ui-icon-filter);
 }
 ```
 
-**Built-in UI (FairyGUI)** — use `editorResources/` paths directly:
-```typescript
-// Panel icon in decorator
-@IEditor.panel("MyPanel", {
-    icon: "editorResources/my-plugin/icon.svg",
-    // ...
-})
-
-```
+If the same standalone icon must work in both dark and light modes, add `filter: var(--ui-icon-filter);` to its standalone `EditorImage`, custom monochrome `<img>`, or `background-image`. The token is `none` in dark mode and darkens the icon in light mode. Built-in toolbar/icon selectors already apply the filter to their nested `EditorImage`; do not apply it twice.
 
 ### Using IFrame in React
 
@@ -323,8 +350,13 @@ The IDE exposes ready-made React components via `IEditor.React`. They integrate 
 ```tsx
 // Destructure for convenience
 const { EditorImage, TextInput, NumericInput, SelectInput,
-        SearchInput, ResourceInput, NodeRefInput, Popup, TooltipTarget,
-        LocalizedText, ResizeHandle } = IEditor.React;
+        NumericInputWithSlider, RangeInput, SearchInput,
+        ResourceInput, FontInput, FileInput, NodeRefInput,
+        ColorInput, GradientInput, CurveInput, PolygonInput,
+        Popup, TooltipTarget, ToolButton, LocalizedText, ResizeHandle,
+        FileTabBar, FileTabBarView, InspectorPanelModel, InspectorPanel,
+        beginPointerDragSession, getTheme, subscribeThemeChange, useThemeVersion,
+        readCssPx, readCssString } = IEditor.React;
 ```
 
 #### Component Overview
@@ -332,20 +364,32 @@ const { EditorImage, TextInput, NumericInput, SelectInput,
 | Component | Description |
 |---|---|
 | `EditorImage` | Editor icon/image resolved from editor URL, asset UUID, file, or thumbnail URL |
-| `LocalizedText` | Translated text via `gui.Translations`; optional UBB/HTML rendering |
+| `LocalizedText` | Editor-localized text with optional UBB/HTML rendering |
+| `FileTabBar` / `FileTabBarView` | Shared tab model and React view with heavy, light, and weak variants |
 | `TextInput` | Text field with multiline, password, i18n translation-key, and submitOnTyping modes |
 | `NumericInput` | Drag-to-edit number input — supports prefix/suffix, min/max, fractionDigits, mouse wheel |
 | `NumericInputWithSlider` | `NumericInput` paired with a range slider |
-| `SelectInput` | Button-style dropdown backed by a popup list |
+| `RangeInput` | Two numeric inputs plus a dual-handle slider for an inclusive bounded range |
+| `SelectInput` | Button-style dropdown with async loading and optional search |
 | `SearchInput` | Search bar with leading icon and clear button |
 | `ResourceInput` | Asset reference picker — drag-and-drop, copy/paste, context menu |
+| `FontInput` | Project font asset picker plus system/custom font-name input |
+| `FileInput` | Filesystem path input with drag/drop and native open/save dialog |
 | `NodeRefInput` | Scene node reference picker |
 | `ColorInput` | Color picker popup (supports nullable/checkable) |
 | `GradientInput` | Gradient editor popup |
 | `CurveInput` | Curve editor popup |
+| `PolygonInput` | Polygon preview/editor with optional image background and vertex limits |
 | `TooltipTarget` | Wraps any element to add the editor's tooltip behavior |
+| `ToolButton` | Native button semantics plus editor tooltips; use when a tool button needs tips |
 | `Popup` | General-purpose anchored popup; portals into shadow root, closes on outside click/Escape |
 | `ResizeHandle` | Draggable divider for resizable layouts; supports vertical/horizontal, keyboard, and double-click reset |
+| `InspectorPanelModel` / `InspectorPanel` | Metadata-driven inspector model and React renderer |
+| `beginPointerDragSession` | Tracks pointer drags across editor surfaces and same-origin frames |
+
+Theme helpers in the same namespace: `getTheme`, `subscribeThemeChange`, `useThemeVersion`, `injectStyles`, `setTheme`, `readCssPx`, and `readCssString`. `useThemeVersion()` is the React hook for canvas or other imperative rendering that must recompute colors after either a theme switch or appearance-token change. Prefer reactive CSS variables for normal styling.
+
+`IEditor.Flow`, `IEditor.StateGraph`, and `IEditor.Timeline` are also React-based, but they are separate runtime namespaces rather than members of `IEditor.React`. Use the guides below instead of nesting them below `IEditor.React`.
 
 #### EditorImage
 
@@ -418,6 +462,25 @@ Props: `value`, `onCommit(value)`, `min`, `max`, `step`, `fractionDigits`, `pref
 
 Extra props over `NumericInput`: `sliderMin`, `sliderMax`, `centeredAtOne` (symmetric mapping around 1, for scale fields)
 
+#### RangeInput
+
+Use a controlled two-value tuple for a bounded inclusive range. Both number fields and both slider handles obey `min`, `max`, and `step`.
+
+```tsx
+const [range, setRange] = useState<[number, number]>([0.2, 0.8]);
+
+<RangeInput
+    value={range}
+    min={0}
+    max={1}
+    step={0.01}
+    fractionDigits={2}
+    onCommit={setRange}
+/>
+```
+
+Props: `value`, `min`, `max`, `onCommit(value)`, `step` (default `0.01`), `fractionDigits`, `disabled`, `className`
+
 #### SelectInput
 
 ```tsx
@@ -441,7 +504,7 @@ const items = [
 />
 ```
 
-Props: `value`, `items`, `onChange(value, item)`, `onBeforeOpen`, `placeholder`, `disabled`, `visibleItemCount`, `className`, `style`
+Props: `value`, `items`, `onChange(value, item)`, `onBeforeOpen`, `placeholder`, `disabled`, `visibleItemCount`, `searchable`, `searchPlaceholder`, `className`, `popupClassName`, `style`
 
 #### SearchInput
 
@@ -464,7 +527,39 @@ Asset reference picker backed by the editor's asset database. Supports drag-and-
 />
 ```
 
-Props: `value`, `onCommit(text, asset)`, `typeFilter`, `disabled`, `placeholder`, `className`, `allowInternalAssets`, `onCreate`
+Props: `value`, `onCommit(text, asset)`, `typeFilter`, `disabled`, `placeholder`, `className`, `allowInternalAssets`, `allowInternalGUIAssets`, `customFilter`, `onCreate`
+
+#### FontInput
+
+Accepts project font assets and system/custom font names. Preserve both callback values: `text` is the serializable value, while `asset` is non-null when the user selected a font asset.
+
+```tsx
+<FontInput
+    value={font}
+    onCommit={(text, asset) => setFont(text)}
+/>
+```
+
+Props: `value`, `onCommit(text, asset)`, `disabled`, `placeholder`, `className`, `allowInternalAssets`, `allowInternalGUIAssets`
+
+#### FileInput
+
+Use this for a real filesystem path, not an asset reference. It supports typing, dropping a file, and opening a native open/save dialog. The default committed form is project-relative; set `absolutePath` when the value will be passed directly to Node.js filesystem APIs.
+
+```tsx
+<FileInput
+    value={outputPath}
+    action="save"
+    absolutePath
+    dialogOptions={{
+        title: "Export data",
+        filters: [{ name: "JSON", extensions: ["json"] }]
+    }}
+    onCommit={next => { setOutputPath(next); return true; }}
+/>
+```
+
+Props: `value`, `onCommit(value)`, `disabled`, `absolutePath`, `action` (`"open"` or `"save"`), `dialogOptions`, `placeholder`, `className`
 
 #### NodeRefInput
 
@@ -478,6 +573,41 @@ Props: `value`, `onCommit(text, asset)`, `typeFilter`, `disabled`, `placeholder`
 
 Props: `value`, `onCommit(node, compType?)`, `typeFilter`, `disabled`, `className`, `onNodeResolved`
 
+#### PolygonInput
+
+```tsx
+<PolygonInput
+    value={points}                 // [x0, y0, x1, y1, ...]
+    background={imageData}
+    sourceWidth={512}
+    sourceHeight={512}
+    minPoints={3}
+    previewHeight={96}
+    onCommit={setPoints}
+/>
+```
+
+Props: `value`, `defaultValue`, `onCommit(value)`, `background`, `sourceWidth`, `sourceHeight`, `minPoints`, `maxPoints`, `previewHeight`, `readonly`, `checkable`
+
+#### InspectorPanelModel and InspectorPanel
+
+Create the model once, register a globally unique type name, call `inspect`, and render the model with `InspectorPanel`.
+
+```tsx
+const model = useMemo(() => {
+    const next = new IEditor.React.InspectorPanelModel();
+    next.allowUndo = true;
+    next.inspect(watchedData, "MyCompany.MyPlugin.SettingsType");
+    return next;
+}, [watchedData]);
+
+useEffect(() => () => model.resetInspectors(), [model]);
+
+return <IEditor.React.InspectorPanel model={model} className="inspector-scroll" />;
+```
+
+Model APIs: `inspect`, `resetInspectors`, `resetDefault`, `getInspectors`, `showCatalog`, `getScrollY`, `setScrollY`, `resizeToFit`, `allowUndo`, `history`, `onDataChanged`
+
 #### TooltipTarget
 
 Wraps one child element and shows an editor tooltip on hover.
@@ -488,7 +618,24 @@ Wraps one child element and shows an editor tooltip on hover.
 </TooltipTarget>
 ```
 
-Props: `tips` (string or i18n key; empty/null disables), `children` (single element)
+Props: `tips` (string or i18n key; empty/null disables), `delay` (default 800 ms), `instantGroup`, `children` (single element)
+
+#### ToolButton
+
+Use `ToolButton` when a toolbar or icon button needs tips. Its `title` prop is consumed by the editor tooltip system and is not forwarded as a native DOM `title`.
+
+```tsx
+<IEditor.React.ToolButton
+    className="toolbar-icon-button"
+    title="Refresh assets"
+    aria-label="Refresh assets"
+    onClick={refresh}
+>
+    <IEditor.React.EditorImage src={refreshIcon} />
+</IEditor.React.ToolButton>
+```
+
+A tool button without tips can use a normal `<button>`. Do not write `<button title="...">` when the title is intended as tool-button tips; use `ToolButton` instead. Use `TooltipTarget` for tips on non-button elements.
 
 #### Popup
 
@@ -559,67 +706,283 @@ Key props:
 
 ---
 
+### Graph Editors: `IEditor.Flow` and `IEditor.StateGraph`
+
+The IDE provides two reusable React graph editors. Choose by graph semantics:
+
+| Need | Runtime namespace | Type namespace | State model |
+|---|---|---|---|
+| Nodes with typed input/output ports, data-flow or logic links, comments, minimap, undo/redo | `IEditor.Flow` | `IEditor.IFlow` | `GraphStore` plus `IEditor.Flow.commands` |
+| Pinless state-machine nodes with direct `sourceId -> targetId` transitions, arrows, self-loops, and fan-out | `IEditor.StateGraph` | `IEditor.IStateGraph` | Controlled `nodes`, `edges`, selection, and viewport props |
+
+These are siblings of `IEditor.React`. Runtime components and helpers are under `IEditor.Flow` / `IEditor.StateGraph`; TypeScript interfaces are under `IEditor.IFlow` / `IEditor.IStateGraph`.
+
+#### Port-based Node Graph (`IEditor.Flow`)
+
+`IEditor.Flow` is the shared React Flow-based graph core used for port-based editors. Its serializable `GraphData` contains nodes, links, comments, and viewport state. A `GraphStore` is the single source of truth and includes subscriptions plus undo/redo.
+
+Create the store and registries once, then render `GraphEditor`:
+
+```tsx
+const graphStore = IEditor.Flow.createGraphStore(initialGraph);
+const nodeRegistry = new IEditor.Flow.NodeRegistry(nodeDefinitions);
+const portTypes = new IEditor.Flow.PortTypeRegistry(portTypeDefinitions);
+
+this._react = new IEditor.ReactDOM();
+this._panel = this._react;
+this._react.render(
+    <IEditor.Flow.GraphEditor
+        store={graphStore}
+        registry={nodeRegistry}
+        portTypes={portTypes}
+        showMiniMap
+    />
+);
+```
+
+Use the type namespace when declaring graph data and extension points:
+
+```tsx
+const nodeDefinitions: IEditor.IFlow.NodeDefinition[] = [{
+    typeId: "my-plugin.log",
+    title: "Log",
+    menuPath: "My Plugin/Log",
+    create(position) {
+        return {
+            id: IEditor.Flow.nextId("node"),
+            typeId: "my-plugin.log",
+            position,
+            inputs: [{
+                id: "message",
+                kind: "in",
+                dataType: "string",
+                label: "Message"
+            }],
+            outputs: [],
+            data: {}
+        };
+    }
+}];
+
+const portTypeDefinitions: IEditor.IFlow.PortTypeInfo[] = [
+    { key: "string", label: "String", color: "var(--bp-type-string)" }
+];
+```
+
+Common runtime APIs:
+
+- `GraphEditor`, `DefaultNodeBody`
+- `createGraphStore()` / `GraphStore`
+- `NodeRegistry`, `PortTypeRegistry`
+- `emptyGraph()`, `nextId()`, `findNode()`, `linksOfPort()`
+- `commands.addNode()`, `connect()`, `removeNodes()`, `moveNodes()`, `setNodeData()`, `setInputValue()`, comments, copy, and paste
+
+`GraphEditor` can also customize connection validation, node body renderers, inline port inputs, canvas drop, context menus, selection callbacks, zoom limits, breakpoints, and animated debug-flow edges. Use `controllerRef` for imperative `focusNode()`.
+
+Dispose the store along with the panel:
+
+```ts
+onDestroy() {
+    graphStore.dispose();
+    this._react?.dispose();
+}
+```
+
+#### State-machine Graph (`IEditor.StateGraph`)
+
+`IEditor.StateGraph` is for pinless state-machine diagrams. Nodes use `x`/`y` coordinates, and each edge directly names its `sourceId` and `targetId`. Unlike `IEditor.Flow`, it does not expose a graph store: the plugin owns the arrays and feeds updated state back through callbacks.
+
+```tsx
+type StateMachineViewProps = {
+    nodes: IEditor.IStateGraph.StateGraphNode[];
+    edges: IEditor.IStateGraph.StateGraphEdge[];
+    setNodes: React.Dispatch<React.SetStateAction<IEditor.IStateGraph.StateGraphNode[]>>;
+    addTransition(sourceId: string, targetId: string): void;
+};
+
+function StateMachineView({ nodes, edges, setNodes, addTransition }: StateMachineViewProps) {
+    const [selectedNodes, setSelectedNodes] = useState<ReadonlySet<string>>(new Set());
+    const [selectedEdges, setSelectedEdges] = useState<ReadonlySet<string>>(new Set());
+
+    return (
+        <IEditor.StateGraph.StateGraphEditor
+            nodes={nodes}
+            edges={edges}
+            selectedNodeIds={selectedNodes}
+            selectedEdgeIds={selectedEdges}
+            showControls
+            onSelectionChange={(nodeIds, edgeIds) => {
+                setSelectedNodes(new Set(nodeIds));
+                setSelectedEdges(new Set(edgeIds));
+            }}
+            onNodesMove={(ids, dx, dy) => {
+                const moved = new Set(ids);
+                setNodes(current => current.map(node =>
+                    moved.has(node.id)
+                        ? { ...node, x: node.x + dx, y: node.y + dy }
+                        : node
+                ));
+            }}
+            onConnect={addTransition}
+        />
+    );
+}
+```
+
+Use `nodeStyles` to style node kinds, `defaultNodeId` to mark the default state, and callbacks for connect, move, double-click, context menus, deletion, selection, and viewport changes. An `apiRef` exposes `focusNode()`, `fitView()`, `beginLink()`, `cancelLink()`, and `clientToGraph()`. For an initial viewport without mounting the component, use `IEditor.StateGraph.fitNodesToView()`; default dimensions are exported as `NODE_WIDTH` and `NODE_HEIGHT`.
+
+---
+
+### Timeline Editor (`IEditor.Timeline`)
+
+`IEditor.Timeline` is the shared React Timeline for hierarchical tracks, keyframes, event markers, numeric curves, and host-neutral interval items such as clips. Runtime values are under `IEditor.Timeline`; use `IEditor.ITimeline` for all Timeline interfaces.
+
+`TimelineEditor` reads and edits the supplied `TimelineDocument` directly. Keep the document object stable instead of rebuilding it every render. After the host mutates that object outside Timeline operations, change `dataVersion` so cached evaluation and drawing are refreshed. When the editor handle is available, prefer its `document` operations for normal key, track, evaluation, rename, and frame-rate work.
+
+```tsx
+function ClipTimeline() {
+    const documentRef = useRef<IEditor.ITimeline.TimelineDocument>({
+        fps: 30,
+        totalFrame: 60,
+        aniData: {
+            name: "Root",
+            prop: [{
+                name: "opacity",
+                label: "Opacity",
+                keys: [
+                    { f: 0, val: 0 },
+                    { f: 30, val: 1 }
+                ]
+            }]
+        }
+    });
+    const timelineRef = useRef<IEditor.ITimeline.TimelineEditorHandle | null>(null);
+    const [dataVersion, setDataVersion] = useState(0);
+
+    const actions = useMemo<IEditor.ITimeline.TimelineActions>(() => ({
+        onCurrentFrameChange(frame) {
+            previewAtFrame(frame);
+        },
+        onDataModified() {
+            saveTimelineDocument(documentRef.current);
+        },
+        onKeySelectionChange(selection) {
+            showSelectedKeys(selection);
+        },
+        onEditTransactionChange(active) {
+            setEditing(active);
+        }
+    }), []);
+
+    function addKeyFromHost() {
+        documentRef.current.aniData?.prop?.[0].keys?.push({ f: 60, val: 0 });
+        setDataVersion(version => version + 1);
+    }
+
+    return <div style={{ height: "100%", minHeight: 180, display: "flex", flexDirection: "column" }}>
+        <button onClick={addKeyFromHost}>Add key</button>
+        <div style={{ flex: 1, minHeight: 0 }}>
+            <IEditor.Timeline.TimelineEditor
+                ref={timelineRef}
+                data={documentRef.current}
+                dataVersion={dataVersion}
+                actions={actions}
+                mode="frame"
+            />
+        </div>
+    </div>;
+}
+```
+
+Give the Timeline's parent a real width and height because the canvas follows its container with `ResizeObserver`.
+
+Keep these parts distinct:
+
+- **Document model**: `TimelineDocument` owns `aniData`, `event`, and document capabilities. Its hierarchy uses `TimelineLayer`; layers contain `TimelineKey` and optional `TimelineRange` arrays. `TimelineEvent`, `TimelineValue`, `TimelineFrameData`, and `TimelineTweenInfo` cover the remaining common value shapes. Numeric values support Curve mode; strings and booleans are discrete. Opaque values can use `TimelineCustomValueAdapter`.
+- **View state**: `TimelineViewState` stores scrolling, scale, playhead, expanded tracks, and selections separately from document data. Create an empty state with `IEditor.Timeline.createTimelineViewState()`, and persist it through `TimelineEditorHandle.getViewState()` / `setViewState()`.
+- **Host actions and history**: `TimelineActions` supplies value lookup, edit/render/playback callbacks, selection notifications, context menus, range constraints, overlays, clipboard, drag/drop, and `onEditTransactionChange`. Pass the host's `IEditor.IDataHistory` through the `history` prop when Timeline edits should participate in undo/redo.
+- **Editor state**: `getSnapshot()` returns a `TimelineEditorSnapshot` containing `position`, `mode`, `totalFrame`, `rowHeight`, `readOnly`, `modified`, `playing`, and `fps`. Use `setPosition()`, `setMode()`, and `setModified()` for the corresponding state changes.
+- **Document handle**: `handle.document` is a `TimelineDocumentHandle` with `getData`, `getSaveData`, `getLayer`, `getKey`, `addKey`, `writeKey`, `removeTrack`, `getAdjacentKeys`, path rename helpers, `evaluate`, `evaluatePath`, `visitValues`, and `setFps`. `addKey` performs the normal history and rendering path; reserve `writeKey`, which does not force an immediate render, for a host-controlled batch.
+- **Selection handle**: `handle.selection` is a `TimelineSelectionHandle` for querying, replacing, clearing, or removing selected tracks and selecting their keys.
+- **Navigation and layout**: the main handle provides `focusPosition`, `focusRange`, `focusTrack`, `fitView`, `getTrackAt`, `getTrackLayout`, `setTrackScrollTop`, `setTrackOpen`, `hasTrackKeyAt`, `getTrackKeyColor`, `positionToTime`, playback, command, and coordinate-conversion methods.
+
+Example handle operations:
+
+```ts
+const timeline = timelineRef.current;
+if (timeline) {
+    timeline.setPosition(12);
+    timeline.document.addKey("Root::opacity", 12, 0.5);
+    const value = timeline.document.evaluatePath("Root::opacity", 12);
+    timeline.selection.setTracks(["Root::opacity"]);
+    const snapshot = timeline.getSnapshot();
+}
+```
+
+Important `TimelineEditorProps` beyond `data`, `actions`, `mode`, and `viewState` include `history`, `rowHeight`, `trackEndPadding`, `readOnly`, `recordMode`, `tweenEditable`, and `currentValueUpdate`. When `currentValueUpdate` is enabled, provide `TimelineActions.getCurrentValue`.
+
+Canonical paths use `.` between hierarchy names and `::` before the property hierarchy. Encode every user-controlled name segment with `encodeTimelinePathSegment()` so literal dots remain unambiguous; use `decodeTimelinePathSegment()` for one returned segment and `getTimelineNamePath()` to obtain the hierarchy portion before `::`. Prefer semantic `executeCommand()` values such as `"copy"`, `"paste"`, `"deleteSelection"`, or `"togglePlayback"` instead of synthesizing keyboard events.
+
+For interval editing, put `TimelineRange` objects on a layer's `ranges`. Each range needs a stable `id`, `start`, and `end`; `movable`, `trackMovable`, `trimStart`, `trimEnd`, `locked`, `interactive`, and `draw` control behavior. Keep host data in `payload`, and use `onRangeChanging` for previews plus `onRangeModified` for the committed edit.
+
+---
+
 ### Built-in Theme Reference
 
-ReactDOM automatically injects a dark-theme base stylesheet into the Shadow DOM. Plugins can use these CSS variables, styled elements, and class names out of the box.
+ReactDOM automatically injects the active dark or light theme plus the editor component stylesheet into its Shadow DOM. Plugins can use the same semantic tokens, styled elements, and classes in both modes.
 
-> **Note:** There are no built-in layout utility classes. Use inline `style` props or a custom CSS file for layout.
+> **Rules:** Do not hard-code dark-theme colors. There are no built-in layout utility classes, so use inline layout styles or a small custom CSS file. For tokens not listed here, inspect the current `theme.css` and `theme-light.css`; they are the source of truth.
 
 #### CSS Custom Properties
 
-Override any variable in your own CSS via `:host { --variable: value; }`.
+Override a variable only for an intentional plugin-specific skin, for example `:host { --accent: #e06c75; }`.
 
-| Variable | Usage |
+| Group | Tokens |
 |---|---|
-| `--bg-darkest` | Deepest background layer |
-| `--bg-dark` | Dark background |
-| `--bg-base` | Standard panel background |
-| `--bg-recessed` | Recessed surface (sidebars, inset areas) |
-| `--bg-elevated` | Elevated surfaces (tooltips, popups) |
-| `--bg-surface` | Buttons, cards |
-| `--bg-hover` | Button/control hover background |
-| `--bg-pressed` | Pressed / active state |
-| `--bg-input` | Input field background |
-| `--bg-header` | Section header row background |
-| `--accent` | Accent color (focus rings, checkboxes, active tabs, selections) |
-| `--accent-hover` | Accent hover state |
-| `--accent-muted` | Subtle accent tint (table row hover) |
-| `--accent-strong` | Strong accent highlight (table row selection) |
-| `--list-item-over` | List item hover background |
-| `--list-item-selected` | List item selected (panel focused) |
-| `--list-item-selected-blur` | List item selected (panel unfocused) |
-| `--primary` | Primary button background |
-| `--primary-hover` | Primary button hover |
-| `--primary-text` | Primary button text |
-| `--text` | Default text color |
-| `--text-bright` | Bright text (headings, active tab) |
-| `--text-muted` | Secondary text (placeholders, inactive hints) |
-| `--text-disabled` | Disabled text |
-| `--border` | Default border color |
-| `--border-subtle` | Very subtle border |
-| `--border-light` | Light / visible border |
-| `--border-hover` | Border on hover |
-| `--status-warning` | Warning semantic color |
-| `--status-error` | Error semantic color |
-| `--status-error-bright` | Bright error (inline error text) |
-| `--shadow-color-medium` | Medium shadow (panels, cards) |
-| `--shadow-color-strong` | Strong shadow (popup menus, dropdowns) |
-| `--radius` | Default border radius |
-| `--radius-lg` | Large radius (inputs, primary button) |
-| `--radius-sm` | Small radius (icon buttons) |
-| `--font-size` | Base font size |
-| `--font-size-small` | Small font size |
-| `--font-family` | Font stack |
-| `--transition` | Standard transition (`120ms ease`) |
-| `--scrollbar-size` | Scrollbar width/height |
-| `--scrollbar-thumb` | Scrollbar thumb color |
+| Backgrounds | `--bg-darkest`, `--bg-dark`, `--bg-sunken`, `--bg-base`, `--bg-recessed`, `--bg-elevated`, `--bg-surface`, `--bg-hover`, `--bg-pressed`, `--bg-input`, `--bg-header`, `--bg-muted-surface`, `--bg-titlebar`, `--body-bg` |
+| Accent and selection | `--accent`, `--accent-hover`, `--accent-muted`, `--accent-strong`, `--drop-indicator`, `--list-item-over`, `--list-item-selected`, `--list-item-selected-border`, `--list-item-selected-blur`, `--list-row-selected`, `--toggle-button-selected-bg`, `--toggle-button-selected-text` |
+| Primary controls | `--primary`, `--primary-hover`, `--primary-text`, `--control-hover-subtle`, `--group-bg-muted`, `--group-accent-line` |
+| Text | `--text`, `--text-bright`, `--text-muted`, `--text-disabled`, plus the `--hierarchy-title-*` state tokens |
+| Panel chrome | `--panel-bg`, `--panel-topbar-bg`, `--panel-tab-bg`, `--panel-tab-bg-hover`, `--panel-tab-bg-active`, `--panel-tab-text`, `--panel-tab-text-hover`, `--panel-tab-text-active`, `--panel-tool-hover-bg`, `--inspector-tab-*`, `--play-controls-*` |
+| Icons | `--ui-icon-filter`, `--ui-icon-opacity`, `--ui-icon-hover-opacity`, `--panel-tab-icon-opacity` |
+| Borders and inputs | `--border`, `--border-subtle`, `--border-light`, `--border-hover`, `--checkbox-*`, `--select-popup-*`, `--select-option-*` |
+| Status | `--status-warning`, `--status-warning-strong`, `--status-error`, `--status-error-bright`, `--status-close-bg` |
+| Popup and tags | `--popup-menu-bg`, `--popup-menu-hover`, `--popup-menu-separator`, `--badge-bg`, `--badge-text`, `--tag-border`, `--tag-text`, `--tag-bg` |
+| Drag and drop | `--drag-row-bg`, `--drag-row-bg-soft`, `--drag-row-outline`, `--drop-line-color`, `--drop-line-shadow-inner`, `--drop-line-glow` |
+| Overlays and shadows | `--hud-*`, `--shadow-color-subtle`, `--shadow-color-medium`, `--shadow-color-strong`, `--row-zebra`, `--progress-shine`, `--resize-handle` |
+| Progress and markers | `--progress-track`, `--progress-border`, `--progress-fill`, `--marker-fill`, `--marker-shadow`, `--marker-glyph`, `--round-expand-*` |
+| Geometry and type | `--radius`, `--radius-lg`, `--radius-sm`, `--font-size`, `--font-size-small`, `--font-size-tiny`, `--font-family`, `--transition` |
+| Scrollbars | `--scrollbar-size`, `--scrollbar-thumb`, `--scrollbar-track`, `--scrollbar-thumb-soft`, `--scrollbar-thumb-soft-hover`, `--scrollbar-thumb-firefox` |
+| Graph and code | `--grid-minor`, `--grid-major`, `--bp-type-*`, `--flow-*`, `--curve-*`, `--animator-controller-*`, `--hljs-*` |
+| Timeline canvas | `--timeline-property-row-bg`, `--timeline-property-row-alt`, `--timeline-track-bg`, `--timeline-curve-bg`, `--timeline-track-row-source-bg`, `--timeline-track-line`, `--timeline-track-row-line`, `--timeline-track-grid-line`, `--timeline-track-grid-line-major`, `--timeline-record-ruler-bg`, `--timeline-record-ruler-text`, `--timeline-selection-bg`, `--timeline-select-keys-bg`, `--timeline-key-color`, `--timeline-key-dir-color`, `--timeline-key-selected-color`, `--timeline-clip-bg-start`, `--timeline-clip-bg-end`, `--timeline-clip-text`, `--timeline-clip-selected-border`, `--timeline-property-key-state-border`, `--timeline-overlay-bg`, `--timeline-tween-grid-line`, `--timeline-tween-path`, `--timeline-path-color-saturation`, `--timeline-path-color-lightness` |
+
+Use `--toggle-button-selected-bg` and `--toggle-button-selected-text` for persistent on/off state represented by `aria-pressed="true"`; the built-in `.toolbar-icon-button` already consumes them. Timeline clip colors use the `--timeline-clip-*` tokens.
+
+#### Standalone icons across dark and light themes
+
+When the same standalone icon must support both themes, use `--ui-icon-filter`. The light theme sets it to darken icons authored for dark surfaces, while the dark theme sets it to `none`.
+
+```css
+.my-monochrome-icon {
+    width: 16px;
+    height: 16px;
+    filter: var(--ui-icon-filter);
+    opacity: var(--ui-icon-opacity);
+}
+
+.my-tool:hover .my-monochrome-icon {
+    opacity: var(--ui-icon-hover-opacity);
+}
+```
+
+Built-in selectors such as `.toolbar-icon-button > .image .image-content`, `button.icon > .image .image-content`, and `.search-input > .image .image-content` already apply the filter. A standalone `EditorImage` does not; add a custom class only when that icon needs to adapt across dark and light themes.
 
 #### Auto-styled HTML Elements
 
 These elements are styled automatically — just use the raw HTML tag:
 
-- `<button>` — dark surface, hover/active/disabled states
-- `<input type="text|number|search|password|url|email">` — dark input style, focus ring
+- `<button>` — themed surface with hover/active/disabled states
+- `<input type="text|number|search|password|url|email">` — themed input with focus ring
 - `<textarea>` — multi-line input, resizable
 - `<input type="checkbox">` — custom styled checkbox, accent color when checked
 - `<select>` — custom dropdown arrow
@@ -632,7 +995,7 @@ These elements are styled automatically — just use the raw HTML tag:
 |---|---|
 | `button.primary` | Primary CTA button (`--primary` blue background) |
 | `button.icon` / `.btn-icon` | Small 22×22 icon button (transparent bg, no border by default) |
-| `.toolbar-icon-button` | 24×24 toolbar icon button; set `aria-pressed="true"` for toggled state |
+| `.toolbar-icon-button` | 24×24 toolbar icon button; set `aria-pressed="true"` for persistent state using the `--toggle-button-selected-*` tokens |
 | `.tab` | Tab button; add `.active` or `aria-selected="true"` for the selected tab |
 | `.search-input` | Search bar container — wrap an icon element + `<input>` inside |
 | `.select-input` | Custom select-like trigger button (IDE select widget style) |
@@ -747,15 +1110,58 @@ static onLoad() {
 
 ### Popup context menu
 
+Create a popup menu once and reuse it. Do not call anonymous `Menu.create([...])` from a click, pointer, or `contextmenu` handler; that creates a new registered menu for every interaction.
+
 ```typescript
-let menu = IEditor.Menu.create([
-    { label: "Action 1", click: () => console.log("action1") },
-    { label: "Action 2", click: () => console.log("action2") },
-    { type: "separator" },
-    { label: "Action 3", click: () => console.log("action3") }
-]);
-menu.show();
+const CONTEXT_MENU_ID = "MyCompany.MyPlugin.ItemContextMenu";
+
+type ContextMenuData = {
+    targetId: string;
+};
+
+let contextMenu: IEditor.IMenu | undefined;
+
+function getContextMenu(): IEditor.IMenu {
+    if (contextMenu)
+        return contextMenu;
+
+    contextMenu = IEditor.Menu.getById(CONTEXT_MENU_ID)
+        ?? IEditor.Menu.create(CONTEXT_MENU_ID, [
+            {
+                id: "open",
+                label: "Open",
+                click: (_itemId, data: ContextMenuData) => openItem(data.targetId)
+            },
+            {
+                id: "delete",
+                label: "Delete",
+                click: (_itemId, data: ContextMenuData) => deleteItem(data.targetId)
+            }
+        ]);
+    return contextMenu;
+}
+
+function showContextMenu(event: MouseEvent, targetId: string, canDelete: boolean) {
+    event.preventDefault();
+
+    const menu = getContextMenu();
+    menu.setItemEnabled("delete", canDelete);
+    menu.show(
+        undefined,
+        { x: event.clientX, y: event.clientY },
+        { targetId } satisfies ContextMenuData
+    );
+}
 ```
+
+Menu lifecycle rules:
+
+- Use a globally unique, plugin-prefixed menu ID. Menu IDs share one registry.
+- Prefer creating the menu during plugin/panel initialization and caching the instance. Lazy creation is also safe when it uses the getter pattern above.
+- `IEditor.Menu.create(sameId, ...)` does not return the existing menu; it throws. Always call `getById()` before an ID-based lazy create.
+- Give actionable menu items explicit, stable IDs so the reused menu can update them.
+- For changing content or state, reuse the menu and call `setItems()`, `setItemEnabled()`, `setItemVisible()`, `setItemChecked()`, or `setItemLabel()` before `show()`.
+- When multiple live component instances need callbacks bound to different owners, cache one menu per owner and give each menu a unique instance ID; do not let instances accidentally share callbacks.
 
 ---
 
@@ -763,18 +1169,30 @@ menu.show();
 
 **Process**: UI
 
-```typescript
-export class MyDialog extends IEditor.Dialog {
+```tsx
+import styles from "./MyDialog.css";
+
+function MyDialogView() {
+    return <div style={{ padding: 12 }}>Dialog content</div>;
+}
+
+export class MyDialog extends IEditor.Dialog<IEditor.ReactDOM> {
     async create() {
-        this.contentPane = await gui.UIPackage.createWidget(
-            "editorResources/my-plugin/MyDialog.widget"
-        );
+        this.contentPane = new IEditor.ReactDOM();
+        this.contentPane.setSize(480, 320);
+        this.contentPane.adoptStyles(styles);
+        this.contentPane.render(<MyDialogView />);
         this.title = "My Dialog";
         this.resizable = true;
     }
 
     onShown() { /* dialog visible */ }
     onHide() { /* dialog hidden */ }
+
+    dispose() {
+        this.contentPane?.dispose();
+        super.dispose();
+    }
 }
 
 // Show dialog
@@ -783,26 +1201,34 @@ Editor.showDialog(MyDialog, null);
 
 ### Dialog with InspectorPanel
 
-```typescript
-export class ConfigDialog extends IEditor.Dialog {
+```tsx
+export class ConfigDialog extends IEditor.Dialog<IEditor.ReactDOM> {
     private _data: any;
+    private _model: InstanceType<typeof IEditor.React.InspectorPanelModel>;
 
     async create() {
-        let panel = IEditor.GUIUtils.createInspectorPanel();
-        panel.allowUndo = true;
-        panel.setSize(500, 400);
-        this.contentPane = panel;
-        this.title = "Configuration";
-        this.resizable = true;
-
         this._data = IEditor.DataWatcher.watch({ name: "default", value: 100 });
-        panel.inspect(this._data, {
-            name: "ConfigType",
+        this._model = new IEditor.React.InspectorPanelModel();
+        this._model.allowUndo = true;
+        this._model.inspect(this._data, {
+            name: "MyCompany.MyPlugin.ConfigType",
             properties: [
                 { name: "name", type: String },
                 { name: "value", type: Number }
             ]
         });
+
+        this.contentPane = new IEditor.ReactDOM();
+        this.contentPane.setSize(500, 400);
+        this.contentPane.render(<IEditor.React.InspectorPanel model={this._model} />);
+        this.title = "Configuration";
+        this.resizable = true;
+    }
+
+    dispose() {
+        this._model?.resetInspectors();
+        this.contentPane?.dispose();
+        super.dispose();
     }
 }
 ```
@@ -814,61 +1240,33 @@ export class ConfigDialog extends IEditor.Dialog {
 **Process**: UI  
 **Use**: Custom property editor in Inspector panel
 
-```typescript
-@IEditor.inspectorField("MyCustomField")
-export class MyCustomField extends IEditor.PropertyField {
-    // Optional: preload resources
-    @IEditor.onLoad
-    static async onLoad() {
-        await gui.UIPackage.resourceMgr.load("editorResources/MyField.widget");
-    }
+React inspector fields initialize metadata in `create()` and return JSX from `render()`. Prefer the existing built-in field types and `IEditor.React` controls before registering a custom field.
 
+```tsx
+@IEditor.inspectorField("MyCompany.MyPlugin.ActionField")
+export class ActionField extends IEditor.PropertyField {
     create(): IEditor.IPropertyFieldCreateResult {
-        let input = IEditor.GUIUtils.createTextInput();
-        input.on("submit", () => {
-            this.target.setValue(input.text);
-        });
         return {
-            ui: input,
             stretchWidth: true,
-            captionDisplay: "normal",  // "normal"|"hidden"|"none"
+            captionDisplay: "hidden",
         };
     }
 
-    refresh(): Promise<void> {
-        let value = this.target.getValue();
-        // Update UI to reflect current value
-        return Promise.resolve();
+    render(): React.ReactNode {
+        return (
+            <IEditor.React.ToolButton
+                title={this.property.tips || "Execute"}
+                disabled={this.react?.readonly}
+                onClick={() => this.target.setValue(Date.now())}
+            >
+                Execute
+            </IEditor.React.ToolButton>
+        );
     }
 }
 
-// Usage in a component:
-// @property({ type: Laya.Node, inspector: "MyCustomField" })
-// public myNode: Laya.Node;
-```
-
-### Button-style Inspector Field
-
-```typescript
-@IEditor.inspectorField("ActionButton")
-export class ActionButton extends IEditor.ButtonsField {
-    create() {
-        let res = super.create();
-
-        this.addButton("Execute").onClick(async () => {
-            let owner = this.inspector.target.owner;
-            let compId = this.inspector.target.id;
-            await Editor.scene.runScript("MyHelper.execute", owner, compId);
-        });
-
-        this.addButton("Clear").onClick(async () => {
-            await Editor.scene.runScript("MyHelper.clear",
-                this.inspector.target.owner, this.inspector.target.id);
-        });
-
-        return res;
-    }
-}
+// @property({ type: Number, inspector: "MyCompany.MyPlugin.ActionField" })
+// lastRun: number;
 ```
 
 ---
@@ -979,19 +1377,29 @@ console.log(settings.data.apiEndpoint);
 
 ### Settings panel in Preferences/Project Settings
 
-```typescript
-@IEditor.panel("MyPluginPrefs", {
+```tsx
+@IEditor.panel("MyCompany.MyPlugin.Preferences", {
     usage: "preference",       // "preference"|"project-settings"|"build-settings"
     title: "My Plugin"
 })
 export class MyPluginPrefs extends IEditor.EditorPanel {
+    private _react: IEditor.ReactDOM;
+    private _model: InstanceType<typeof IEditor.React.InspectorPanelModel>;
+
     async create() {
-        let panel = IEditor.GUIUtils.createInspectorPanel();
-        panel.inspect(
+        this._model = new IEditor.React.InspectorPanelModel();
+        this._model.inspect(
             Editor.getSettings("MyPluginSettings").data,
             "MyPluginSettings"
         );
-        this._panel = panel;
+        this._react = new IEditor.ReactDOM();
+        this._panel = this._react;
+        this._react.render(<IEditor.React.InspectorPanel model={this._model} />);
+    }
+
+    onDestroy() {
+        this._model?.resetInspectors();
+        this._react?.dispose();
     }
 }
 ```
@@ -1078,7 +1486,7 @@ await IEditorEnv.utils.downloadFile(url, savePath);
 
 **Process**: UI + Scene
 
-```typescript
+```tsx
 // UI process: register target
 class PluginMain {
     @IEditor.onLoad
@@ -1094,18 +1502,28 @@ class PluginMain {
 }
 
 // UI process: build settings panel
-@IEditor.panel("MyPlatformBuildSettings", {
+@IEditor.panel("MyCompany.MyPlugin.PlatformBuildSettings", {
     usage: "build-settings",
     title: "My Platform"
 })
 export class MyPlatformBuildSettings extends IEditor.EditorPanel {
+    private _react: IEditor.ReactDOM;
+    private _model: InstanceType<typeof IEditor.React.InspectorPanelModel>;
+
     async create() {
-        let panel = IEditor.GUIUtils.createInspectorPanel();
-        panel.inspect(
+        this._model = new IEditor.React.InspectorPanelModel();
+        this._model.inspect(
             Editor.getSettings("MyPlatformSettings").data,
             "MyPlatformSettings"
         );
-        this._panel = panel;
+        this._react = new IEditor.ReactDOM();
+        this._panel = this._react;
+        this._react.render(<IEditor.React.InspectorPanel model={this._model} />);
+    }
+
+    onDestroy() {
+        this._model?.resetInspectors();
+        this._react?.dispose();
     }
 }
 
@@ -1264,12 +1682,16 @@ export class ABCThumbnailGen extends IEditorEnv.AssetThumbnail {
 
 ### Preview Panel
 
-```typescript
+```tsx
 // UI process
-@IEditor.panel("ABCPreview", { usage: "preview" })
+@IEditor.panel("MyCompany.MyPlugin.ABCPreview", { usage: "preview" })
 export class ABCPreview extends IEditor.EditorPanel implements IEditor.IPreviewPanel {
+    private _react: IEditor.ReactDOM;
+
     async create() {
-        this._panel = new gui.Widget();
+        this._react = new IEditor.ReactDOM();
+        this._panel = this._react;
+        this._react.render(<div className="text-muted">Select an ABC asset</div>);
     }
 
     accept(asset: IEditor.IAssetInfo): boolean {
@@ -1278,6 +1700,10 @@ export class ABCPreview extends IEditor.EditorPanel implements IEditor.IPreviewP
 
     async refresh(asset: IEditor.IAssetInfo, render3DCanvas: IEditor.IRender3DCanvas) {
         return render3DCanvas.createObject("ABCPreviewScript", "setAssetById", asset.id);
+    }
+
+    onDestroy() {
+        this._react?.dispose();
     }
 }
 
@@ -1463,11 +1889,14 @@ let url = Editor.assetDb.getURL(asset);
 // Relative path -> URL
 let url = Editor.assetDb.toURL("assets/textures/hero.png");
 
-// Convert "editorResources/..." path to absolute path
-// The second argument (allowResourcesSearch=true) is required for editorResources paths
-let fullPath = Editor.assetDb.getFullPath(
-    await Editor.assetDb.getAsset("editorResources/my-plugin/locales", true)
+// Resolve a relative editor-resource locator; the second argument must be true
+let resourceAsset = await Editor.assetDb.getAsset(
+    "editorResources/my-plugin/locales",
+    true
 );
+
+// Node.js IO requires the absolute filesystem path
+let fullPath = Editor.assetDb.getFullPath(resourceAsset);
 
 // === File Operations ===
 
@@ -1660,24 +2089,64 @@ myI18n.setContent("zh-CN", {
 console.log(myI18n.t("panelTitle"));
 
 // Use in decorators
-@IEditor.panel("MyPanel", { title: "i18n:MyPlugin:panelTitle" })
+@IEditor.panel("MyCompany.MyPlugin.MainPanel", { title: "i18n:MyPlugin:panelTitle" })
 ```
 
----
+### Type Descriptor Captions: English Defaults, Chinese Translation
 
-## 19. Programmatic UI Creation
+For `IEditor.FTypeDescriptor`, write English labels directly in `caption`. Only Chinese needs an additional caption translation:
 
-### GUIUtils factory methods
-
-```typescript
-let button = IEditor.GUIUtils.createButton();
-let checkbox = IEditor.GUIUtils.createCheckbox();
-let textInput = IEditor.GUIUtils.createTextInput();
-let comboBox = IEditor.GUIUtils.createComboBox();
-let colorInput = IEditor.GUIUtils.createColorInput();
-let resourceInput = IEditor.GUIUtils.createResourceInput();
-let inspectorPanel = IEditor.GUIUtils.createInspectorPanel();
+```ts
+export const types: IEditor.FTypeDescriptor[] = [{
+    name: "MyPlugin.Config",
+    caption: "Config",
+    properties: [
+        { name: "enabled", caption: "Enabled", type: "boolean" },
+        { name: "quality", caption: "Quality", type: "number" }
+    ]
+}];
 ```
+
+The Chinese translation map uses `type.name` as its top-level key. Within each type, `"#"` is the type caption and other keys match property names:
+
+```ts
+const zhCNTypeCaptions: Record<string, Record<string, string>> = {
+    "MyPlugin.Config": {
+        "#": "配置",
+        enabled: "启用",
+        quality: "质量"
+    }
+};
+```
+
+Attach the active Chinese translations in the UI process before registering the types:
+
+```ts
+@IEditor.onLoad
+async onLoad() {
+    // Clone shared descriptors before adding UI-only metadata.
+    const editorTypes: IEditor.FTypeDescriptor[] = types.map(type => ({
+        ...type,
+        properties: type.properties?.map(property => ({ ...property }))
+    }));
+
+    if (i18n.language === "zh-CN") {
+        for (const type of editorTypes) {
+            const translation = zhCNTypeCaptions[type.name];
+            if (translation)
+                type.captionTranslation = translation;
+        }
+    }
+
+    Editor.typeRegistry.addTypes(editorTypes);
+}
+```
+
+Apply `captionTranslation` before `Editor.typeRegistry.addTypes()`. If the descriptor array is imported from a module also used by the Scene process, clone it first so UI-only translation metadata does not mutate the shared definitions.
+
+- `caption`: English/default caption.
+- `captionTranslation["#"]`: Chinese type caption.
+- `captionTranslation[propertyName]`: Chinese property caption.
 
 ---
 
