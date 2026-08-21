@@ -33,7 +33,7 @@ Complete code examples for all plugin types. Read the relevant section based on 
 
 ## Table of Contents
 1. [Panel Plugin (React)](#1-panel-plugin)
-2. [React UI Guide](#2-react-ui-guide) — includes `IEditor.React`, `IEditor.Flow`, `IEditor.StateGraph`, `IEditor.Timeline`, and the Built-in Theme Reference
+2. [React UI Guide](#2-react-ui-guide) — includes built-in controls, code editing/diffs/highlighting, style/root helpers, `IEditor.Flow`, `IEditor.StateGraph`, `IEditor.Timeline`, and the Built-in Theme Reference
 3. [Menu Plugin](#3-menu-plugin)
 4. [Dialog](#4-dialog)
 5. [Inspector Field](#5-custom-inspector-field)
@@ -210,6 +210,34 @@ The IDE build pipeline has a **built-in css-text esbuild plugin** that imports `
 }
 ```
 
+### Reusable component and imperative-module styles
+
+Use the style API that matches ownership:
+
+- Keep panel- or dialog-level custom CSS on `reactDOM.adoptStyles(styles)`.
+- Call `IEditor.React.useStyles(styles)` at the top level of a reusable React component. The nearest `IEditor.ReactDOM` shares identical CSS in its current root and releases it after the last consumer unmounts. Keep style arrays identity-stable.
+- Call `IEditor.React.useDOMRoot()` only when an imperative library needs the current `Document` or `ShadowRoot`. The hook updates if the ReactDOM moves to another editor window.
+- Call `IEditor.React.ensureStyles(target, styleId, styles)` for imperative-module CSS that must remain in the target element's current root. Use a stable plugin-prefixed ID such as `"com.example.my-plugin.code-view"`; the first registration for that ID wins for the lifetime of each root.
+
+```tsx
+import controlStyles from "./MyControl.css";
+
+function MyControl() {
+    IEditor.React.useStyles(controlStyles);
+    const root = IEditor.React.useDOMRoot();
+
+    useLayoutEffect(() => {
+        if (!root)
+            return;
+        return mountImperativeControl(root);
+    }, [root]);
+
+    return <div className="my-plugin-control" />;
+}
+```
+
+Do not use `ensureStyles()` for ordinary React component CSS: it is intentionally permanent and has no unmount cleanup.
+
 > **Important:** For most plugins, the built-in auto-styled elements (`<button>`, `<input>`, etc.) and component classes (`button.primary`, `.tab`, `.toolbar-icon-button`, etc.) are **sufficient and preferred**. They ensure visual consistency with the editor. Only create custom CSS when the built-in classes genuinely cannot cover your needs.
 
 > **Tip:** When writing custom CSS, always reference the built-in CSS variables (`var(--bg-base)`, `var(--text)`, `var(--border)`, etc.) to keep your UI consistent with the editor theme.
@@ -353,10 +381,12 @@ const { EditorImage, TextInput, NumericInput, SelectInput,
         NumericInputWithSlider, RangeInput, SearchInput,
         ResourceInput, FontInput, FileInput, NodeRefInput,
         ColorInput, GradientInput, CurveInput, PolygonInput,
+        CodeEditor, DiffEditor, HighlightedCode, highlightElement,
         Popup, TooltipTarget, ToolButton, LocalizedText, ResizeHandle,
         FileTabBar, FileTabBarView, InspectorPanelModel, InspectorPanel,
-        beginPointerDragSession, getTheme, subscribeThemeChange, useThemeVersion,
-        readCssPx, readCssString } = IEditor.React;
+        beginPointerDragSession, useStyles, useDOMRoot, ensureStyles,
+        getTheme, subscribeThemeChange, useThemeVersion, readCssPx,
+        readCssString } = IEditor.React;
 ```
 
 #### Component Overview
@@ -375,6 +405,9 @@ const { EditorImage, TextInput, NumericInput, SelectInput,
 | `ResourceInput` | Asset reference picker — drag-and-drop, copy/paste, context menu |
 | `FontInput` | Project font asset picker plus system/custom font-name input |
 | `FileInput` | Filesystem path input with drag/drop and native open/save dialog |
+| `CodeEditor` | Controlled, lazily loaded CodeMirror editor with editor theming and filename-based language support |
+| `DiffEditor` | Read-only, viewport-rendered CodeMirror diff in unified or side-by-side mode |
+| `HighlightedCode` | Read-only `<code>` element highlighted with the editor's highlight.js theme |
 | `NodeRefInput` | Scene node reference picker |
 | `ColorInput` | Color picker popup (supports nullable/checkable) |
 | `GradientInput` | Gradient editor popup |
@@ -387,7 +420,7 @@ const { EditorImage, TextInput, NumericInput, SelectInput,
 | `InspectorPanelModel` / `InspectorPanel` | Metadata-driven inspector model and React renderer |
 | `beginPointerDragSession` | Tracks pointer drags across editor surfaces and same-origin frames |
 
-Theme helpers in the same namespace: `getTheme`, `subscribeThemeChange`, `useThemeVersion`, `injectStyles`, `setTheme`, `readCssPx`, and `readCssString`. `useThemeVersion()` is the React hook for canvas or other imperative rendering that must recompute colors after either a theme switch or appearance-token change. Prefer reactive CSS variables for normal styling.
+Theme and style helpers in the same namespace: `getTheme`, `subscribeThemeChange`, `useThemeVersion`, `injectStyles`, `setTheme`, `useStyles`, `useDOMRoot`, `ensureStyles`, `readCssPx`, and `readCssString`. `useThemeVersion()` is the React hook for canvas or other imperative rendering that must recompute colors after either a theme switch or appearance-token change. Prefer reactive CSS variables for normal styling.
 
 `IEditor.Flow`, `IEditor.StateGraph`, and `IEditor.Timeline` are also React-based, but they are separate runtime namespaces rather than members of `IEditor.React`. Use the guides below instead of nesting them below `IEditor.React`.
 
@@ -560,6 +593,86 @@ Use this for a real filesystem path, not an asset reference. It supports typing,
 ```
 
 Props: `value`, `onCommit(value)`, `disabled`, `absolutePath`, `action` (`"open"` or `"save"`), `dialogOptions`, `placeholder`, `className`
+
+#### CodeEditor
+
+Use the built-in controlled CodeMirror component for editable source or data. It loads its implementation lazily, already follows editor theme tokens, and fills the height of its parent; give the containing element a real height. Do not install CodeMirror in the plugin.
+
+```tsx
+const [draft, setDraft] = useState(source);
+
+<div style={{ height: "100%", minHeight: 0 }}>
+    <IEditor.React.CodeEditor
+        content={draft}
+        fileName="MyPlugin.ts"
+        readOnly={saving}
+        lineWrapping
+        tabSize={4}
+        search
+        onChange={setDraft}
+        onSave={() => saveSource(draft)}
+    />
+</div>
+```
+
+Required props are `content`, `fileName`, `readOnly`, `onChange`, and `onSave`. Keep `content` in host state and update it from `onChange`. `fileName` selects syntax support by extension; supported groups include JavaScript/JSX, TypeScript/TSX, JSON and LayaAir data files, HTML, CSS, Markdown, XML/SVG, YAML, and GLSL/HLSL/WGSL shaders. The platform save shortcut (`Mod-S`) calls `onSave`; when `readOnly` is true, editing and that callback are disabled.
+
+Optional behavior props:
+
+- `lineWrapping` wraps long lines; default `false`.
+- `tabSize` controls indentation and tab display width.
+- `indentWithTab` lets Tab indent instead of moving focus; default `true`.
+- `lineNumbers` and `foldGutter` control the two gutters; both default `true`.
+- `search` enables the platform search shortcut; default `false`.
+- `autocompletion` enables completion UI and its keymap; default `false`.
+
+#### DiffEditor
+
+Use the read-only `DiffEditor` for source or data comparisons. It renders only the visible viewport and protects large inputs by reducing expensive syntax and inline-diff work, so prefer it over constructing a complete highlighted diff HTML tree.
+
+```tsx
+<div style={{ height: "100%", minHeight: 0 }}>
+    <IEditor.React.DiffEditor
+        before={previousSource}
+        after={currentSource}
+        beforeFileName="Player.ts"
+        afterFileName="Player.ts"
+        viewMode="side-by-side"
+        collapseUnchanged={{ margin: 3, minSize: 8 }}
+        ariaLabel="Player changes"
+    />
+</div>
+```
+
+Required props are `before`, `after`, `afterFileName`, and `viewMode` (`"unified"` or `"side-by-side"`). `beforeFileName` defaults to `afterFileName`. Use `lineWrapping` to wrap long lines. `collapseUnchanged` defaults to `{ margin: 3, minSize: 4 }`; pass `false` to show every unchanged line. Optional `className` styles the outer container, and `ariaLabel` gives the diff an accessible group label. Give the parent a real height.
+
+#### HighlightedCode and highlightElement
+
+Use `HighlightedCode` for a read-only snippet whose content may change. It renders a `<code>` element, writes the content as text, reapplies highlighting after changes, and installs the matching editor theme in the current root. Wrap it in `<pre>` when preformatted block layout is wanted.
+
+```tsx
+<pre className="my-plugin-code-preview">
+    <IEditor.React.HighlightedCode
+        content={source}
+        fileName="MyPlugin.ts"
+        lineWrapping
+    />
+</pre>
+```
+
+Props: `content`, optional highlight.js `language` or alias, optional `fileName`, optional `className`, and optional `lineWrapping` (default `false`). `language` takes precedence over `fileName`; when only `fileName` is supplied, its extension selects the language. Omitting both leaves the text unhighlighted.
+
+For an existing imperative DOM element, put the language class and raw text on a fresh `<code>` element, then call `highlightElement`. It installs highlight styles into that element's `Document` or `ShadowRoot`; no `adoptStyles()` call is needed.
+
+```ts
+const code = document.createElement("code");
+code.className = "language-typescript";
+code.textContent = source;
+container.appendChild(code);
+IEditor.React.highlightElement(code);
+```
+
+Prefer `HighlightedCode` when React owns the element or the content changes repeatedly.
 
 #### NodeRefInput
 
@@ -823,13 +936,17 @@ function StateMachineView({ nodes, edges, setNodes, addTransition }: StateMachin
                         : node
                 ));
             }}
+            canConnect={(sourceId, targetId) => sourceId !== targetId}
+            onConnectRejected={(sourceId, targetId) => {
+                showConnectionError(sourceId, targetId);
+            }}
             onConnect={addTransition}
         />
     );
 }
 ```
 
-Use `nodeStyles` to style node kinds, `defaultNodeId` to mark the default state, and callbacks for connect, move, double-click, context menus, deletion, selection, and viewport changes. An `apiRef` exposes `focusNode()`, `fitView()`, `beginLink()`, `cancelLink()`, and `clientToGraph()`. For an initial viewport without mounting the component, use `IEditor.StateGraph.fitNodesToView()`; default dimensions are exported as `NODE_WIDTH` and `NODE_HEIGHT`.
+Use `nodeStyles` to style node kinds, `defaultNodeId` to mark the default state, and callbacks for connect, move, double-click, context menus, deletion, selection, and viewport changes. Return `false` from `canConnect(sourceId, targetId)` to reject a transition; `onConnectRejected(sourceId, targetId)` then lets the host show feedback. It also receives `targetId: null` when `apiRef.beginLink(sourceId)` cannot find the source node. An `apiRef` exposes `focusNode()`, `fitView()`, `beginLink()`, `cancelLink()`, and `clientToGraph()`. For an initial viewport without mounting the component, use `IEditor.StateGraph.fitNodesToView()`; default dimensions are exported as `NODE_WIDTH` and `NODE_HEIGHT`.
 
 ---
 
