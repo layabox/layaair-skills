@@ -2265,6 +2265,82 @@ Apply `captionTranslation` before `Editor.typeRegistry.addTypes()`. If the descr
 - `captionTranslation["#"]`: Chinese type caption.
 - `captionTranslation[propertyName]`: Chinese property caption.
 
+### Plugin Script Components: Translate Auto-Generated User Types
+
+The previous pattern applies when the plugin owns and registers an `IEditor.FTypeDescriptor` array. A plugin script component declared with `@Laya.regClass()`, `@Laya.classInfo()`, and `@Laya.property()` is different: the editor compiler generates its user type descriptor, so the plugin must not create and register a duplicate descriptor merely to translate it.
+
+Keep English/default text in the script decorators:
+
+```ts
+const { regClass, classInfo, property } = Laya;
+
+@regClass()
+@classInfo({ caption: "Particle Controller" })
+export class ParticleController extends Laya.Script {
+    @property({
+        type: Number,
+        caption: "Emission Rate",
+        tips: "Particles emitted per second"
+    })
+    emissionRate = 10;
+}
+```
+
+The generated user type is keyed in `Editor.typeRegistry.types` by the script asset UUID—the UUID preserved by the script's paired `.meta` when the script is renamed. Use that UUID as the top-level translation key. `"#"` translates the class/type caption; the other keys are decorated property names:
+
+```ts
+// These maps may be inline, imported, or loaded from any source.
+// Their storage path and file names are not part of the API contract.
+const zhCNTypeCaptions: Record<string, Record<string, string>> = {
+    "01234567-89ab-cdef-0123-456789abcdef": {
+        "#": "粒子控制器",
+        emissionRate: "发射率"
+    }
+};
+
+const zhCNTypeTips: Record<string, Record<string, string>> = {
+    "01234567-89ab-cdef-0123-456789abcdef": {
+        emissionRate: "每秒发射的粒子数量"
+    }
+};
+```
+
+User-script descriptors may already exist when the plugin UI code loads, and they are replaced when scripts are compiled or reloaded. Apply translations once immediately, then reapply them from the UI process whenever `onUserTypesChanged` fires:
+
+```ts
+class MyPluginTypeI18n {
+    @IEditor.onLoad
+    static onLoad() {
+        if (i18n.language !== "zh-CN")
+            return;
+
+        this.applyTypeTranslations();
+        Editor.typeRegistry.onUserTypesChanged.add(this.applyTypeTranslations, this);
+    }
+
+    @IEditor.onUnload
+    static onUnload() {
+        Editor.typeRegistry.onUserTypesChanged.remove(this.applyTypeTranslations, this);
+    }
+
+    private static applyTypeTranslations() {
+        for (const typeName in zhCNTypeCaptions) {
+            const type = Editor.typeRegistry.types[typeName];
+            if (type)
+                type.captionTranslation = zhCNTypeCaptions[typeName];
+        }
+
+        for (const typeName in zhCNTypeTips) {
+            const type = Editor.typeRegistry.types[typeName];
+            if (type)
+                type.tipsTranslation = zhCNTypeTips[typeName];
+        }
+    }
+}
+```
+
+The immediate call covers types registered before this loader. The event handler covers late registration and replaces translations lost when the editor rebuilds user types. Always remove the handler in `@IEditor.onUnload`. This pattern also works for plugin-owned serializable helper classes generated from Laya decorators, not only classes derived from `Laya.Script`.
+
 ---
 
 ## Decorator Quick Reference
