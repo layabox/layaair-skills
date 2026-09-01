@@ -1,6 +1,6 @@
 ---
 name: layaair-ide-plugin
-description: "Create LayaAir IDE editor plugins/extensions, using React by default for panels, dialogs, settings, previews, and other editor UI. TRIGGER for LayaAir plugin or editor-extension work: React/editor panels, dialogs, menus, inspectors, code/diff/highlighted-code views, Flow/StateGraph/Timeline editors, build plugins, asset processors, custom editors, scene hooks, gizmos, or APIs including @IEditor, @IEditorEnv, IEditor.React/ReactDOM, IEditor.Flow/IFlow, IEditor.StateGraph/IStateGraph, IEditor.Timeline/ITimeline, CodeEditor, DiffEditor, HighlightedCode, FileInput, FontInput, and EditorPanel. Chinese triggers: 编辑器插件, 编辑器面板, React面板, 代码编辑器, 代码对比, 代码高亮, 节点图, 状态图, 时间轴, 插件面板, 写一个面板, 写个插件. This repository is the LayaAir IDE; requests to write editor plugins or panels here use this skill. Do NOT use this skill to operate the current IDE appearance or theme when the ThemeManagement MCP tool is available; call that tool instead."
+description: "Create, package, and publish LayaAir IDE editor plugins with React-first UI and current @IEditor/@IEditorEnv APIs. Use for panels, dialogs, menus, inspectors, graph/timeline editors, custom editors, build/asset plugins, scene hooks, gizmos, and installable packages. This repository is the LayaAir IDE, so editor-plugin work here uses this skill. Do NOT use this skill to operate the current IDE appearance or theme when the ThemeManagement MCP tool is available; call that tool instead."
 ---
 
 # LayaAir IDE Plugin Development Skill
@@ -21,6 +21,42 @@ Scripts compile to: `bundle.editor.js` (UI), `bundle.scene.js` (Scene), `bundle.
 Plugins are created in **user projects**, not in the IDE source. Plugin scripts can be placed **anywhere under the project's `assets/` directory** — there is no required directory structure. The IDE automatically compiles scripts with `@IEditor.*` or `@IEditorEnv.*` decorators into the corresponding bundles.
 
 Place editor-only resources (icons, styles, locales) under a plugin-specific subdirectory such as `editorResources/my-plugin/`; files under `editorResources/` are excluded from the game build. Do not place plugin resources directly in the shared `editorResources/` root, because names can collide. The physical directory containing `editorResources/` may be anywhere under `assets/`. When using a relative editor-resource path with an editor API that supports it, omit every physical prefix segment and begin at `editorResources/`, for example `editorResources/my-plugin/icon.svg`. This logical relative path is not suitable for Node.js filesystem IO.
+
+## Sharing and Publishing Plugins
+
+Choose the distribution form according to how the recipient should consume the plugin:
+
+1. **Direct folder copy** is the simplest form of source sharing. A recipient can copy the plugin folder anywhere under the target project's `assets/` directory; the IDE imports its assets and compiles the decorated plugin scripts automatically. Keep the plugin self-contained, and preserve its `.meta` files when UUID-based references must remain stable.
+2. **Regular resource package** is convenient for sharing the same asset content as one `.layapkg` file. Export the plugin folder with the IDE's **Export Resource Package** command, or run `layaair export-package assets/MyPlugin -o output/MyPlugin.layapkg`. The recipient imports it as project assets. Use `--include-dependencies` only when the package must also collect referenced assets outside the selected folder. This does not make the result an installable package.
+3. **Installable package** is the advanced form for Package Manager installation, dependency resolution, and versioned distribution. Export exactly one project folder with the IDE's **Export Installable Package** command, or run `layaair export-installable-package packages/MyPlugin -o output/MyPlugin.layapkg`. The selected folder may be outside `assets`, but it must be inside the project and directly contain a valid `package.json`; its contents are written to the archive root.
+
+An installable plugin package requires non-empty `name` and `version` strings. Use a stable, globally unique package name and prefer a semantic version. The manifest may also declare:
+
+- `pluginDependencies`: maps package names to required versions or supported package sources. The Package Manager resolves and installs these LayaAir plugin packages and orders dependencies before the consuming package. Use this field for plugin-package relationships; ordinary npm `dependencies` have a different purpose.
+- `contributes`: declares package capabilities consumed by IDE subsystems. The current public contribution is `contributes.engine`, an array that adds engine libraries or add-ons to existing libraries for Project Settings and build selection. This field does not register editor panels, menus, or Scene/UI scripts; continue using the appropriate `@IEditor.*` and `@IEditorEnv.*` decorators for those.
+- `precompile`: a non-empty array of source-directory paths relative to the package root. During export, the IDE precompiles TypeScript in those directories, removes the listed source directories from the staged package, and writes the generated UI and Scene bundles to `build~/bundle.editor.js` and `build~/bundle.scene.js`. Every entry must name an existing directory inside the package; absolute paths and paths that escape the package root are invalid. Precompilation runs only when exactly one folder is exported and that folder directly contains `package.json`. It does not generate the Preview/runtime `bundle.js`, so do not place gameplay runtime source in a precompiled directory when the installed package must expose that source to Preview builds.
+
+```json
+{
+  "name": "com.example.my-plugin",
+  "version": "1.0.0",
+  "precompile": ["editor", "scene"],
+  "pluginDependencies": {
+    "com.example.shared-tools": "1.2.0"
+  },
+  "contributes": {
+    "engine": [
+      {
+        "name": "example.engine-module",
+        "caption": "Example Engine Module",
+        "files": ["engine/libs/example-module.js"]
+      }
+    ]
+  }
+}
+```
+
+Do not spell the CLI command as separate words or substitute a generic package command: its exact name is `export-installable-package`.
 
 ## Step-by-Step: Creating a Plugin
 
@@ -59,7 +95,7 @@ Read `references/api-patterns.md` for the complete API reference with code examp
 14. **TypeScript config**: Must have `"experimentalDecorators": true` and `"jsx": "react-jsx"`. React runtime is built in, but TypeScript compilation needs `"@types/react"` and `"@types/react-dom"` in `devDependencies`.
 15. **Images**: In React, `import icon from "./icon.png"` returns an absolute `file://` URL string; use it in JSX or CSS. Supported formats: png, jpg, gif, svg, webp, ico, bmp. Keep editor-only images under the plugin's own `editorResources/<plugin-name>/` directory.
 16. **IFrame**: Never use a raw `<iframe>`. Create one `IEditor.WebIFrame` with `useRef` + a callback ref, append its `.element` to a React container, and hide with `display:none` instead of removing it from the DOM.
-17. **Node.js modules**: Node built-in modules (`fs`, `path`, `child_process`, etc.) are available in the IDE — import and use them without installing packages.
+17. **Node.js modules**: Node built-in modules (`fs`, `path`, `child_process`, etc.) are available in UI/Scene code and can be loaded with `import` or `require()` without installing packages. They are unavailable in Preview code.
 18. **Renaming scripts**: When renaming a script file, always rename the paired `.meta` file so its asset UUID remains attached.
 19. **Type name uniqueness**: Type names passed to `Editor.typeRegistry.addTypes` and `InspectorPanel.inspect` (the `name` field) share the global type registry and must be unique. Use a plugin-specific prefix, such as `"MyPlugin_SettingsType"`.
 20. **Panel ID uniqueness**: The `id` passed to `@IEditor.panel(id, ...)` is globally unique. Use a plugin- or company-specific prefix, such as `"MyCompany.ProjectManager.MainPanel"`.
