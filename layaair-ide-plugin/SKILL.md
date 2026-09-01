@@ -70,6 +70,7 @@ Common plugin types:
 - **Timeline plugin**: Track, keyframe, event, curve, or interval editing with `IEditor.Timeline`
 - **Build plugin**: Extend the build pipeline
 - **Asset plugin**: Custom asset types with import/export/preview
+- **ScriptableObject data asset**: Typed `.sco` data resources using the built-in 3.4.1+ workflow
 - **Scene hook plugin**: React to scene events (node creation, save, etc.)
 - **Gizmo plugin**: Custom scene view drawing (2D/3D)
 
@@ -103,12 +104,14 @@ Read `references/api-patterns.md` for the complete API reference with code examp
 22. **Menu instance lifecycle**: Never call anonymous `IEditor.Menu.create([...])` inside click, pointer, context-menu, or other repeated interaction handlers. Cache the menu instance, or lazily reuse a globally unique plugin-prefixed ID with `IEditor.Menu.getById(id) ?? IEditor.Menu.create(id, template)`. Repeated `create()` with the same ID throws. Give menu items stable IDs; update the reused menu with `setItems()`, `setItemEnabled()`, `setItemVisible()`, `setItemChecked()`, or `setItemLabel()`, then call `show()`. See `references/api-patterns.md` §3.
 23. **Code UI**: Use `IEditor.React.CodeEditor` for editable code, `DiffEditor` for read-only unified or side-by-side differences, and `HighlightedCode` for read-only snippets; do not install or bundle CodeMirror or highlight.js. `CodeEditor` is controlled, uses `fileName` to select language support, and reports the platform save shortcut (`Mod-S`) through `onSave`. Prefer `DiffEditor` over building highlighted diff HTML, especially for large files. Use `highlightElement` only for existing imperative DOM. These APIs install their own editor-integrated styling.
 24. **React style/root helpers**: Keep panel-level CSS on `ReactDOM.adoptStyles()`. Use `IEditor.React.useStyles()` for reusable component-owned CSS, `useDOMRoot()` when an imperative library must follow a ReactDOM root across windows, and `ensureStyles()` for permanent imperative-module CSS. Give every `ensureStyles()` registration a stable plugin-prefixed ID; the first registration for an ID wins in each root.
+25. **ScriptableObject `.sco` assets (3.4.1+)**: For typed serializable data resources, extend `Laya.ScriptableObject`, register the class with `@Laya.regClass()`, expose fields with `@Laya.property()`, and use `@Laya.classInfo({ menu, newAssetName, icon })` to add it to Project/Create. The editor already supplies `.sco` import, Inspector editing, saving, dependency analysis, export, and loading; do not register a custom asset importer/saver/loader for this format. Preserve the script `.meta`, because the serialized `_$type` identifies the registered script type. See `references/api-patterns.md` §19.
 
 ## Full API Reference
 
 For the complete API beyond what `references/api-patterns.md` covers, read the type declaration files in the project's `engine/types` directory:
 - **editor.d.ts** — UI process API (`IEditor` namespace, global `Editor` object)
 - **editor-env.d.ts** — Scene process API (`IEditorEnv` namespace, global `EditorEnv` object)
+- **LayaAir.d.ts** — engine/runtime APIs, including `Laya.ScriptableObject`, `Laya.classInfo`, `Laya.property`, and resource loading
 - **IReactComponents / `IEditor.React` declarations** — current public React components, code editor/highlighting APIs, props, theme/style/root helpers, and interaction utilities
 - **IFlow / `IEditor.IFlow` declarations** — port-based graph data, registries, store, commands, and `IEditor.Flow` runtime values
 - **IStateGraph / `IEditor.IStateGraph` declarations** — state-machine nodes, edges, callbacks, and `IEditor.StateGraph` runtime values

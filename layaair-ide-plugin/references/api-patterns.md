@@ -50,6 +50,7 @@ Complete code examples for all plugin types. Read the relevant section based on 
 16. [Asset Database API](#16-asset-database-api)
 17. [Cross-Process Communication](#17-cross-process-communication)
 18. [I18n Support](#18-i18n-support)
+19. [ScriptableObject `.sco` Data Assets](#19-scriptableobject-sco-data-assets)
 
 ---
 
@@ -2340,6 +2341,62 @@ class MyPluginTypeI18n {
 ```
 
 The immediate call covers types registered before this loader. The event handler covers late registration and replaces translations lost when the editor rebuilds user types. Always remove the handler in `@IEditor.onUnload`. This pattern also works for plugin-owned serializable helper classes generated from Laya decorators, not only classes derived from `Laya.Script`.
+
+---
+
+## 19. ScriptableObject (`.sco`) Data Assets
+
+**Version**: LayaAir 3.4.1+
+
+**Use**: Typed, reusable serialized data that is an asset rather than a scene node or component
+
+Use the built-in `.sco` format when a plugin needs a data resource whose fields should be edited in the normal asset Inspector and loaded as a typed `Laya.Resource`. Do not build a custom importer, exporter, saver, loader, or Inspector solely for this case; the IDE already provides that lifecycle for `Laya.ScriptableObject`.
+
+Define the resource in a normal Laya script so the registered type is available to the Scene process and, when the asset is used by the game, to Preview/runtime code:
+
+```ts
+const { regClass, classInfo, property } = Laya;
+
+@regClass()
+@classInfo({
+    caption: "Game Balance",
+    menu: "My Plugin/Data",
+    newAssetName: "GameBalance",
+    icon: "editorResources/my-plugin/game-balance.svg"
+})
+export class GameBalance extends Laya.ScriptableObject {
+    @property({ type: Number, caption: "Move Speed", min: 0 })
+    moveSpeed = 5;
+
+    @property({ type: String, caption: "Display Name" })
+    displayName = "Default";
+}
+```
+
+- `menu` is the path relative to **Project/Create**. Slash-separated segments create submenus; an empty string places the type at the Create-menu root. The normal `",order"` suffix can control ordering.
+- `newAssetName` is the default file name without the `.sco` extension. If omitted, the localized type caption is used.
+- `caption` is the default/English type label. For Chinese captions and property labels on this auto-generated user type, use the script-UUID translation pattern in §18 rather than registering a duplicate type descriptor.
+- `icon` is optional and follows the normal `editorResources/<plugin-name>/...` path rules.
+
+After the script compiles, **Project/Create/My Plugin/Data/Game Balance** creates `GameBalance.sco`. The initial file is JSON shaped like:
+
+```json
+{
+  "_$ver": 1,
+  "_$type": "<registered-script-type-id>"
+}
+```
+
+Do not hand-write or rewrite `_$type`. For project scripts it identifies the generated registered type, normally through the script asset UUID, so keep the script and its `.meta` together when moving, renaming, or sharing it. The `.sco` importer uses `_$type` as the asset subtype; the Inspector then exposes the class's `@Laya.property()` fields and saves non-default values back to the same file.
+
+Load the asset with the normal Laya loader and cast it to the registered class:
+
+```ts
+const balance = await Laya.loader.load("resources/GameBalance.sco") as GameBalance;
+console.log(balance.moveSpeed);
+```
+
+Use the actual project URL or a serialized asset reference in production code. Serialized resource references inside `.sco` data are included in dependency analysis during export and build. If the class must work in game Preview/runtime, do not place its definition in a UI-only `@IEditor.*` script.
 
 ---
 
