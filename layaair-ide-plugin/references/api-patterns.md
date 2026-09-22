@@ -38,7 +38,7 @@ Complete code examples for all plugin types. Read the relevant section based on 
 4. [Dialog](#4-dialog)
 5. [Inspector Field](#5-custom-inspector-field)
 6. [Inspector Layout (Asset Config)](#6-inspector-layout)
-7. [Settings & Preferences](#7-settings--preferences)
+7. [Settings & Preferences](#7-settings--preferences) — includes `IEditor.SecretStorage` for API keys and authenticated HTTP
 8. [Build Plugin](#8-build-plugin)
 9. [Custom Build Target](#9-custom-build-target)
 10. [Asset Type Plugin](#10-custom-asset-type)
@@ -51,6 +51,8 @@ Complete code examples for all plugin types. Read the relevant section based on 
 17. [Cross-Process Communication](#17-cross-process-communication)
 18. [I18n Support](#18-i18n-support)
 19. [ScriptableObject `.sco` Data Assets](#19-scriptableobject-sco-data-assets)
+20. [Package Precompilation](#20-package-precompilation)
+21. [Frame Debugger & Profiler](#21-frame-debugger--profiler)
 
 ---
 
@@ -128,6 +130,59 @@ export class MainPanel extends IEditor.EditorPanel {
     }
 }
 ```
+
+### Persisting panel view state: `onSaveStatus`
+
+`onSaveStatus(): void` saves a panel's view state to `Editor.workspaceConf` for restoration when the panel is initialized again. Typical state includes the active tab, filter text, expanded items, zoom, and splitter widths; it is not the callback for saving edited assets or business files.
+
+Use `Editor.workspaceConf.data.getSection(this.panelId)` to namespace the state by the globally unique panel ID. Write small serializable values in `onSaveStatus()` and read them with defaults in `onStart()`, then apply them to the React view/model. Save the latest committed UI values, not just the initial props; React-owned state needs to be available to the panel through a model, ref, or callback.
+
+```tsx
+@IEditor.panel("MyCompany.MyPlugin.FilterPanel", { title: "Filter Panel" })
+export class FilterPanel extends IEditor.EditorPanel {
+    private _react!: IEditor.ReactDOM;
+    private _filter = "";
+
+    async create() {
+        this._react = new IEditor.ReactDOM();
+        this._panel = this._react;
+        this.renderView();
+    }
+
+    onStart(): void {
+        const conf = Editor.workspaceConf.data.getSection(this.panelId);
+        this._filter = conf.get("filter", "");
+        this.renderView();
+    }
+
+    onSaveStatus(): void {
+        const conf = Editor.workspaceConf.data.getSection(this.panelId);
+        conf.set("filter", this._filter);
+    }
+
+    private renderView(): void {
+        this._react.render(
+            <IEditor.React.TextInput
+                value={this._filter}
+                placeholder="Filter"
+                onCommit={value => {
+                    this._filter = value;
+                    this.renderView();
+                    return true;
+                }}
+            />
+        );
+    }
+
+    onDestroy(): void {
+        this._react?.dispose();
+    }
+}
+```
+
+The current IDE calls `onSaveStatus` during editor shutdown and before destroying plugin panels for hot reload. It is synchronous: returned promises are not awaited, so do not perform asynchronous IO here. This hook is not a per-edit autosave or a guarantee for every hide/close action; if a particular interaction must persist immediately, update the workspace section at that interaction too.
+
+Keep responsibilities separate: `onSave(): Promise<void>` saves actual edited files, `getUnsavedFiles()` reports them for the close/save confirmation, and `onDestroy()` releases React roots and subscriptions. `onSaveStatus()` only captures view state.
 
 ### Panel with React InspectorPanel (config-driven UI)
 
@@ -1532,6 +1587,70 @@ Editor.extensionManager.createSettings("MyPluginSettings",
 console.log(Laya.PlayerConfig["MyPluginSettings"]);
 ```
 
+### API keys and authenticated HTTP: `IEditor.SecretStorage`
+
+**Process**: UI API; secret storage and authenticated transport run in the host/main process. Do not assume an `EditorEnv.SecretStorage` or Preview equivalent.
+
+Use `IEditor.SecretStorage` for plugin/user API keys instead of serializing them into ordinary settings, project assets, or PlayerConfig. It exposes only `set(name, value, options): Promise<boolean>`, `has(name): Promise<boolean>`, `remove(name): Promise<void>`, and `request<T>(name, url, options?): Promise<{ status, headers, data: T }>`. There is no plaintext getter: save a user-entered key once, then request by name without copying the credential into request headers, query parameters, or bodies yourself.
+
+```ts
+const secretName = "com.example.my-plugin.api";
+
+// Call when the user saves or replaces their key, not on every request.
+async function saveApiKey(userEnteredKey: string): Promise<boolean> {
+    return IEditor.SecretStorage.set(secretName, userEnteredKey, {
+        baseURL: "https://api.example.com/v1/",
+        allowedOrigins: ["https://upload.example.com"], // Optional extra origin.
+        // auth defaults to { type: "bearer" }.
+    });
+}
+
+async function generate(prompt: string, signal?: AbortSignal) {
+    if (!await IEditor.SecretStorage.has(secretName))
+        throw new Error("Configure an API key first.");
+
+    const response = await IEditor.SecretStorage.request<{ jobId: string }>(
+        secretName, "generate", {
+            method: "POST",
+            body: { prompt }, // JSON by default.
+            signal,
+        }
+    );
+    if (response.status < 200 || response.status >= 300)
+        throw new Error(`Service returned HTTP ${response.status}`);
+    return response.data; // Full provider body; not automatically unwrapped.
+}
+
+// Call when the user explicitly removes the saved key.
+async function removeApiKey(): Promise<void> {
+    await IEditor.SecretStorage.remove(secretName);
+}
+```
+
+Check the boolean returned by `saveApiKey`: `true` means encrypted persistence succeeded; `false` means the key is usable only in memory (including CLI). Tell the user when a key will not survive restart. Storage failures can reject; do not silently fall back to plaintext settings. Clear the key-entry UI after saving and do not log the entered value.
+
+Names are editor-wide, not project-scoped or a plugin permission boundary. Use a company/plugin/purpose prefix to avoid collisions; other plugins in the same editor can use or modify ordinary named secrets. The built-in `com.layaair.aigc` name is host-managed: use `has` and `request` with the intended platform API path, but do not `set` or `remove` it. Availability may be acquired lazily by the host; do not hard-code platform credentials or service addresses.
+
+**Authentication and target origins** are fixed when saving the key:
+
+| `auth` | Host injection |
+| --- | --- |
+| Omitted or `{ type: "bearer" }` | `Authorization: Bearer <secret>` |
+| `{ type: "header", name: "x-goog-api-key" }` | Named header; optionally add a `prefix` string |
+| `{ type: "query", name: "key" }` | Named query parameter |
+| `{ type: "body", name: "api_key" }` | Named field in a JSON object, form, or multipart body |
+
+`baseURL` must be an HTTP(S) URL without credentials, query, or fragment; prefer HTTPS for remote services. Relative targets resolve against it. Absolute URLs are accepted only on its origin or an origin listed in `allowedOrigins`. Extra entries are origins (scheme, host, optional port), not paths or wildcards. Requests cannot expand this allowlist or override the injected authentication, and redirects are disabled. Cross-origin signed upload/download URLs that do not require this API key should be used directly without attaching the original key.
+
+**Request and response handling**:
+
+- `headers` carries extra provider headers; `query` accepts scalar values or arrays for repeated keys. Model parameters, task polling, and provider business codes remain plugin responsibilities.
+- `bodyType` defaults to `"json"`; also supports `"text"` (string), `"binary"` (`Uint8Array`), `"form"` (record), and `"multipart"` (parts array). A multipart part is `{ name, value: string }`, `{ name, data: Uint8Array, filename, contentType? }`, or `{ name, filePath, filename?, contentType? }`; names may repeat. Resolve editor resource locators to absolute local paths before using `filePath`. Do not set a multipart boundary yourself.
+- `responseType` defaults to `"json"`; alternatives are `"text"`, `"arrayBuffer"`, and `"stream"`. The result is `{ status, headers, data }`, not a Fetch `Response`: inspect `status`, do not use `.ok` or `.json()`. Header names are lowercase; the host redacts the used secret from returned content.
+- HTTP non-2xx responses are returned for the plugin to handle; transport/decoding errors reject. No automatic retries, business-code interpretation, or task polling are performed.
+- For `responseType: "stream"`, use `request<ReadableStream<Uint8Array>>(...)` and consume or cancel `response.data`; decode SSE/NDJSON framing in the plugin. Pass `signal: AbortSignal` for cancellation and clean up on panel/dialog disposal. Cancellation stops transport, not a remote job; cancel that through the provider's API when needed.
+- `timeoutMs` defaults to 10 minutes and covers stream consumption; `maxResponseBytes` defaults to 128 MiB, including streamed data. Always consume or cancel streams rather than leaving them open.
+
 ---
 
 ## 8. Build Plugin
@@ -2397,6 +2516,106 @@ console.log(balance.moveSpeed);
 ```
 
 Use the actual project URL or a serialized asset reference in production code. Serialized resource references inside `.sco` data are included in dependency analysis during export and build. If the class must work in game Preview/runtime, do not place its definition in a UI-only `@IEditor.*` script.
+
+---
+
+## 20. Package Precompilation
+
+Configure `precompile` in the `package.json` directly inside the exported package folder. It works with **Export Installable Package** / `export-installable-package`, and also with a regular resource-package export when exactly one folder is selected. A multi-selection does not activate package precompilation.
+
+### Shorthand and detailed options
+
+The directory-array shorthand remains supported:
+
+```json
+{
+  "name": "com.example.my-plugin",
+  "version": "1.0.0",
+  "precompile": ["editor", "scene"]
+}
+```
+
+Use the object form when the package needs explicit compilation settings:
+
+```json
+{
+  "name": "com.example.my-plugin",
+  "version": "1.0.0",
+  "precompile": {
+    "directories": ["editor", "scene"],
+    "minify": true,
+    "keepNames": true,
+    "define": {
+      "__PLUGIN_DEBUG__": "false",
+      "__PLUGIN_CHANNEL__": "\"stable\""
+    },
+    "external": ["lodash"]
+  }
+}
+```
+
+`lodash` is only an example external dependency; replace it with the packages actually used by the plugin, or omit `external` when no additional exclusions are needed.
+
+| Property | Default | Meaning |
+| --- | --- | --- |
+| `directories` | Required in object form | Non-empty array of source-directory paths relative to the package root. Each must be an existing directory inside that root; absolute paths, parent traversal, and symlinks escaping the root are rejected. |
+| `minify` | `true` | Boolean controlling minification of the precompiled bundles. Set `false` when readable output is needed. |
+| `keepNames` | `true` | Boolean preserving function/class names during compilation, including with minification. Keep it enabled when code depends on these names; this is not source-map generation. |
+| `define` | `{}` | Map of compile-time replacements. Every value must be a string containing a JavaScript expression: `"false"` inserts a boolean; `"\"stable\""` inserts a string literal. Package entries override project definitions with the same key. |
+| `external` | `[]` | Array of non-empty module specifiers/patterns to leave out of the bundle, appended to project external settings and host built-ins. It does not install npm packages or declare LayaAir `pluginDependencies`. |
+
+An omitted `precompile` or the shorthand `[]` disables precompilation. The object form requires non-empty `directories`; unknown object properties and wrong value types are rejected. Do not pass arbitrary esbuild options such as `sourcemap` or `target` into this object. Precompiled output has no source maps; its TypeScript configuration/target comes from the package's `tsconfig.json` or the IDE default.
+
+### Output and external dependencies
+
+- TypeScript entries are classified into UI and Scene bundles. Export writes whichever bundles contain code to `build~/bundle.editor.js` and `build~/bundle.scene.js`, and removes the listed directories and their metadata from the staged archive, not the working source folder. Existing staged `build~/` and `node_modules/` are replaced rather than copied wholesale.
+- Selecting the package root (`"."`) removes all staged root content except `package.json` and its metadata before generated output is added. Prefer specific source directories when icons, locales, runtime source, or other assets must remain in the package.
+- npm imports that remain external in the generated bundles are resolved from installed dependencies and copied, with their required dependency closure, into package-local `node_modules/` for IDE/CLI use. Merely listing an unused package in `external` does not include it. IDE/Node built-ins are not copied. Install ordinary external npm dependencies in the development environment before export; an unresolved external is not automatically downloaded and must be provided by its runtime host if it is not packaged.
+- Dependencies containing native `.node` code require compatible platform, architecture, and Node/Electron ABI. Export warns about native code; it does not rebuild it for every target machine.
+
+### Source boundary and Preview/runtime
+
+Retained TypeScript outside the selected directories must not import files inside them: those source files will be absent after installation. Export checks this boundary and fails on such imports. Put shared code outside removed directories when retained source needs it, or include all its consumers in the precompiled set.
+
+Precompilation produces UI/Scene bundles only, not Preview/runtime `bundle.js`. Keep gameplay code that must participate in Preview/game builds outside the removed directories. A runtime-classified script can enter the Scene bundle, but that does not make its source available to the game's Preview build.
+
+---
+
+## 21. Frame Debugger & Profiler
+
+These are UI-process APIs mounted by their corresponding feature packs. The declaration/interface names are `IFrameDebugger` and `IProfiler`; plugin code calls the runtime values `IEditor.FrameDebugger` and `IEditor.Profiler`. They share state with the built-in panels but do not open a panel or file dialog themselves. If a deployment can omit or unload these feature packs, check that the runtime value exists before calling it.
+
+### Frame Debugger
+
+`IEditor.FrameDebugger.captureFrame()` captures the next WebGL frame and returns JSON-serializable Spector.js data, including ordered commands and initial/final render state. By default it captures the running scene with low-resolution screenshots; use `targetSceneView: true` to capture the editor Scene view without entering play mode, or `resolution: "none"` when screenshots are unnecessary.
+
+```ts
+const capture = await IEditor.FrameDebugger.captureFrame({
+    targetSceneView: true,
+    resolution: "none"
+});
+console.log(capture.commands);
+```
+
+Only one capture can run at a time and calls do not queue. Handle rejected errors such as `CAPTURE_BUSY`, `SCENE_NOT_PLAYING`, `NO_SCENE`, and `UNSUPPORTED_SCENE`. The exact nested capture fields depend on the bundled Spector.js version and WebGL context.
+
+### Profiler
+
+`IEditor.Profiler` controls a Tracy session. A basic automated workflow is `start()` → exercise the workload → `stop()` → `exportReport()` or `exportCapture()` → `dispose()`:
+
+```ts
+await IEditor.Profiler.start({ target: "editor" });
+try {
+    await runMeasuredWorkload();
+    await IEditor.Profiler.stop();
+    const report = await IEditor.Profiler.exportReport({ maxZones: 100 });
+    console.log(report.zones, report.frames);
+} finally {
+    await IEditor.Profiler.dispose();
+}
+```
+
+Targets are `"editor"`, `"browser"`, `"emulator"`, and `"remote"`. Browser profiling needs `connect({ target: "browser" })` before opening the browser preview, then `start()` after that preview registers. Remote profiling also requires `remoteAddress`. `exportCapture()` returns native `.tracy` bytes; `exportReport()` returns a bounded JSON summary of CPU zones and frame timings for automated analysis, not GPU, memory, lock, call-stack, or full timeline data. Use `state` / `onChanged` for progress and remove listeners when finished. Stop before reporting for a stable snapshot, and always call `dispose()` when the API-owned session is no longer needed.
 
 ---
 
