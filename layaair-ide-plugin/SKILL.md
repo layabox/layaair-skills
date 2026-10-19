@@ -65,6 +65,7 @@ Do not spell the CLI command as separate words or substitute a generic package c
 Common plugin types:
 - **Panel plugin**: React editor panel (most common)
 - **Menu plugin**: Add menu items to the editor
+- **Status-bar entry**: Add a compact icon/text command to the editor's bottom-right status area
 - **Inspector plugin**: Custom property fields in Inspector
 - **Graph plugin**: Port-based node graphs with `IEditor.Flow`, or state-machine graphs with `IEditor.StateGraph`
 - **Timeline plugin**: Track, keyframe, event, curve, or interval editing with `IEditor.Timeline`
@@ -106,6 +107,7 @@ Read `references/api-patterns.md` for the complete API reference with code examp
 24. **React style/root helpers**: Keep panel-level CSS on `ReactDOM.adoptStyles()`. Use `IEditor.React.useStyles()` for reusable component-owned CSS, `useDOMRoot()` when an imperative library must follow a ReactDOM root across windows, and `ensureStyles()` for permanent imperative-module CSS. Give every `ensureStyles()` registration a stable plugin-prefixed ID; the first registration for an ID wins in each root.
 25. **ScriptableObject `.sco` assets (3.4.1+)**: For typed serializable data resources, extend `Laya.ScriptableObject`, register the class with `@Laya.regClass()`, expose fields with `@Laya.property()`, and use `@Laya.classInfo({ menu, newAssetName, icon })` to add it to Project/Create. The editor already supplies `.sco` import, Inspector editing, saving, dependency analysis, export, and loading; do not register a custom asset importer/saver/loader for this format. Preserve the script `.meta`, because the serialized `_$type` identifies the registered script type. See `references/api-patterns.md` §19.
 26. **Programmatic diagnostics**: In the UI process, use `IEditor.FrameDebugger.captureFrame()` for one WebGL frame's Spector.js command/state data, and `IEditor.Profiler` for Tracy recording, native `.tracy` export, or JSON CPU-zone/frame statistics. Both are mounted by optional feature packs, share sessions with their editor panels, and do not open UI or file dialogs. See `references/api-patterns.md` §21.
+27. **Status-bar entries**: Create compact UI-process commands with `Editor.statusBar.createItem(pluginPrefixedId, options)`. Prefer creation inside `@IEditor.onLoad` for automatic bundle-unload/reload cleanup; retain and dispose handles created later. IDs are globally unique, duplicate creation throws, and built-in monochrome filtering already handles dark/light themes. See `references/api-patterns.md` §22.
 
 ## Full API Reference
 
@@ -118,6 +120,7 @@ For the complete API beyond what `references/api-patterns.md` covers, read the t
 - **IStateGraph / `IEditor.IStateGraph` declarations** — state-machine nodes, edges, callbacks, and `IEditor.StateGraph` runtime values
 - **ITimeline / `IEditor.ITimeline` declarations** — mutable Timeline documents, view state, actions, split handles, snapshots, commands, range/key/event types, and `IEditor.Timeline` runtime values
 - **IFrameDebugger / `IEditor.IFrameDebugger` and IProfiler / `IEditor.IProfiler` declarations** — programmatic WebGL frame capture and Tracy profiling APIs, exposed at runtime as `IEditor.FrameDebugger` and `IEditor.Profiler`
+- **IStatusBar declarations** — status-bar item creation, updates, visibility, ordering, lifecycle, and `Editor.statusBar`
 
 ## Output Format
 

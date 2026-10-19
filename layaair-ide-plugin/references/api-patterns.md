@@ -53,6 +53,7 @@ Complete code examples for all plugin types. Read the relevant section based on 
 19. [ScriptableObject `.sco` Data Assets](#19-scriptableobject-sco-data-assets)
 20. [Package Precompilation](#20-package-precompilation)
 21. [Frame Debugger & Profiler](#21-frame-debugger--profiler)
+22. [Plugin Status-Bar Entry](#22-plugin-status-bar-entry)
 
 ---
 
@@ -2616,6 +2617,47 @@ try {
 ```
 
 Targets are `"editor"`, `"browser"`, `"emulator"`, and `"remote"`. Browser profiling needs `connect({ target: "browser" })` before opening the browser preview, then `start()` after that preview registers. Remote profiling also requires `remoteAddress`. `exportCapture()` returns native `.tracy` bytes; `exportReport()` returns a bounded JSON summary of CPU zones and frame timings for automated analysis, not GPU, memory, lock, call-stack, or full timeline data. Use `state` / `onChanged` for progress and remove listeners when finished. Stop before reporting for a stable snapshot, and always call `dispose()` when the API-owned session is no longer needed.
+
+---
+
+## 22. Plugin Status-Bar Entry
+
+Use the UI-process `Editor.statusBar` API to add a compact plugin command to the bottom-right status area. The area has no placeholder when no plugin entries exist. Use this for a persistent shortcut or lightweight state indicator; use a panel or dialog for substantial interaction.
+
+```ts
+class MyToolsStatusEntry {
+    private static item: IEditor.IStatusBarItem;
+
+    @IEditor.onLoad
+    static onLoad(): void {
+        this.item = Editor.statusBar.createItem("com.example.my-tools.status", {
+            icon: "editorResources/my-tools/tools.svg",
+            text: "My Tools", // Optional; omit for icon-only display.
+            tooltip: "Open My Tools",
+            priority: 10,
+            onClick: () => {
+                Editor.panelManager.showPanel("com.example.MyToolsPanel");
+            }
+        });
+    }
+
+    static setBusy(busy: boolean): void {
+        this.item.update({
+            text: busy ? "Working…" : "My Tools",
+            enabled: !busy,
+            tone: busy ? "accent" : undefined
+        });
+    }
+}
+```
+
+- Give every item a globally unique plugin/company-prefixed ID. Duplicate `createItem()` calls throw; use `getItem(id)` when code may need to find an existing item, including a hidden one.
+- Use a logical `editorResources/<plugin-name>/...` icon path, a `res://` UUID, or an image URL. Status-bar icons default to `monochrome: true` and already receive the editor's dark/light filter; do not add another filter. Set `monochrome: false` for colored artwork.
+- `text` is optional. `text` and `tooltip` accept `i18n:` keys. `tone` may be `"accent"`, `"warning"`, or `"error"`.
+- Larger `priority` values appear farther left. Equal priorities sort by ID ascending, so order is stable across registration order and hot reload.
+- `update()` merges only supplied fields; setting an optional field to `undefined` clears it. Use `hide()` / `show()` for temporary visibility and `dispose()` for permanent removal. `Editor.statusBar.items` contains visible entries in display order.
+
+An item created during `@IEditor.onLoad` is associated with that plugin bundle and automatically disposed when it unloads or hot reloads. If an item is created later from a click or another callback, keep its handle and dispose it in `@IEditor.onUnload`. Updating an existing item from callbacks is safe.
 
 ---
 
