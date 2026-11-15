@@ -50,7 +50,7 @@ $env:LAYAAIR_INSTALL_DIR = "C:\tools\layaair"; iwr https://raw.githubusercontent
 | Subcommand | Purpose | Key flags (read `layaair help <cmd>` for full list) |
 |------------|---------|----------------------------------------------|
 | `create` | Create a new project from a template | `[name]` positional, `-n/--create-name`, `-p/--create-path`, `-s/--create-subdir`, `-t/--create-template`, `-l/--list-templates` |
-| `build` | Build project for a target platform | `[platform]` positional, `-t/--build-platform`, `-p/--project`, `-o/--build-out`, `-r/--build-recompile`, `-l/--list-platforms`, `--skip-package-install` |
+| `build` | Build project for a target platform | `[platform]` positional, `-t/--build-platform`, `-p/--project`, `-o/--build-out`, `-r/--build-recompile`, `-l/--list-platforms`, `--skip-package-install`, `--skip-editor-scripts` |
 | `validate` | Validate resource files | `[files...]` positional, `-f/--validate-files`, `-p/--project`, `--skip-package-install` |
 | `export-package` | Export one or more assets as a regular `.layapkg` resource package | `<project-relative-asset...>` positional, `-o/--output=<project-relative-file>`, `-p/--project`, `--include-dependencies`, `--disable-plugins=<bool>`, `--skip-package-install` |
 | `export-installable-package` | Export one package folder as an installable `.layapkg` | `<project-relative-folder>` positional, `-o/--output=<project-relative-file>`, `-p/--project`, `--disable-plugins=<bool>`, `--skip-package-install` |
@@ -98,6 +98,17 @@ layaair build -l
 # or
 layaair build --project=<path> --list-platforms
 ```
+
+### `build --skip-editor-scripts` — Skip the project's editor bundle
+
+Use this option when a build machine lacks dependencies used only by the project's editor scripts. Check `layaair help build` for support in the selected CLI runtime.
+
+```bash
+layaair build web -p . --skip-editor-scripts
+layaair build --list-platforms -p . --skip-editor-scripts
+```
+
+The CLI skips compiling and loading the project's `bundle.editor.js`, including any cached copy. Scene-side build hooks and asset importers, installed package plugins, and built-in extensions still load. Custom build targets registered by the project's editor bundle are unavailable for that invocation.
 
 ### Project commands — control package installation
 
