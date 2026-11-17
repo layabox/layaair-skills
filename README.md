@@ -14,6 +14,9 @@ This repository collects and maintains AI Agent skill instructions related to La
 | --- | --- |
 | `layaair-cli` | LayaAir command-line tool skill. Use it to create projects, build projects, validate resource files, start the built-in preview server, run registered script methods, and manage LayaAir CLI versions. |
 | `layaair-ide-plugin` | LayaAir IDE plugin development skill. Use it to write editor plugins, editor panels, menus, inspector fields, build plugins, asset processors, scene hooks, Gizmos, and other IDE extensions. |
+| [`layaair-api-knowledge`](./layaair-api-knowledge/) | Look up LayaAir APIs, compare versions, and inspect scene node and component schemas. Runs independently of the LayaAir Agent plugin. |
+
+To install the standalone knowledge Skill, copy its entire directory into your AI client's Skill directory. The client needs Node.js 20 or newer and outbound HTTPS for the first API query, which downloads the database automatically. The per-user database cache is shared with LayaAir Agent and LayaAir MCP. Scene node and component Schema queries are available offline immediately.
 
 ## License
 

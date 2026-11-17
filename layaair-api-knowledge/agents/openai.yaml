@@ -1,0 +1,4 @@
+interface:
+  display_name: "LayaAir API Knowledge"
+  short_description: "Query LayaAir APIs and node/component serialization schemas"
+  default_prompt: "Use $layaair-api-knowledge to verify the APIs and node or component schemas required for this task."

@@ -14,6 +14,9 @@
 | --- | --- |
 | `layaair-cli` | LayaAir 命令行工具技能。用于创建项目、构建项目、校验资源文件、启动内置预览服务、运行项目中注册的脚本方法，以及管理 LayaAir CLI 版本。 |
 | `layaair-ide-plugin` | LayaAir IDE 插件开发技能。用于编写编辑器插件、编辑器面板、菜单、检查器字段、构建插件、资源处理器、场景钩子、Gizmo 等 IDE 扩展能力。 |
+| [`layaair-api-knowledge`](./layaair-api-knowledge/) | 独立查询 LayaAir API、比较版本及查看场景节点和组件 Schema，无需安装 LayaAir Agent 插件。 |
+
+将独立知识库技能的整个目录复制到 AI 客户端的技能目录即可。运行需要 Node.js 20 或更高版本，首次查询 API 时会通过 HTTPS 自动下载数据库，数据库缓存以用户为单位，与 LayaAir Agent 和 LayaAir MCP 共用。场景节点和组件 Schema 随技能提供，安装后即可离线查询。
 
 ## 许可证
 

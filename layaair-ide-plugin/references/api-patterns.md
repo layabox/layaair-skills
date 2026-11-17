@@ -47,8 +47,8 @@ Complete code examples for all plugin types. Read the relevant section based on 
 13. [Asset Processor](#13-asset-processor)
 14. [Scene Hook](#14-scene-hook)
 15. [Custom Editor (Gizmos)](#15-custom-editor-gizmos)
-16. [Asset Database API](#16-asset-database-api)
-17. [Cross-Process Communication](#17-cross-process-communication)
+16. [Asset Database API](#16-asset-database-api), including [CreateAssetUtil](#createassetutil)
+17. [Cross-Process Communication](#17-cross-process-communication), including [editing the active scene](#editing-the-active-scene)
 18. [I18n Support](#18-i18n-support)
 19. [ScriptableObject `.sco` Data Assets](#19-scriptableobject-sco-data-assets)
 20. [Package Precompilation](#20-package-precompilation)
@@ -2256,6 +2256,21 @@ EditorEnv.assetMgr.onAssetChanged.add(onAssetChanged);
 await EditorEnv.assetMgr.flushChanges();
 ```
 
+### CreateAssetUtil
+
+In the Scene process, use `IEditorEnv.CreateAssetUtil` to create project assets from Laya objects or serialize those objects for custom output.
+
+| Operation | Methods | Result |
+|---|---|---|
+| Create and register an asset | `createPrefab`, `createScene`, `createMaterial`, `createMesh`, `createMesh2D`, `createTexture` | `Promise<IAssetInfo>` |
+| Serialize to memory | `writeAnimationClip`, `writeAnimationClip2D`, `writeMaterial`, `writeMesh`, `writeTexture` | A JSON object for `writeMaterial` and an `ArrayBuffer` for the other methods |
+| Unpack a model into files | `unpackModel` | `Promise<void>` |
+| Convert a readable 3D mesh to a 2D mesh (3.4) | `convertMeshToMesh2D` | `Laya.Mesh2D` |
+
+For the `create*` methods, pass an engine object and a destination path relative to `assets/` with the appropriate extension. Choose an unused path when creating a new asset. Use the returned asset ID for references. If the next operation needs the asset database to finish processing the new file, call `await EditorEnv.assetMgr.flushChanges()`.
+
+IDE 3.4 also declares `writeMesh2D` for serializing a 2D mesh to an `ArrayBuffer`. For `unpackModel`, pass an `IAssetInfo` and an absolute output directory on both 3.3 and 3.4. The 3.4 declaration also accepts a string for the model input, such as an asset ID or a local model path.
+
 ### Key Differences Between Processes
 
 | Feature | Editor.assetDb (UI) | EditorEnv.assetMgr (Scene) |
@@ -2270,6 +2285,35 @@ await EditorEnv.assetMgr.flushChanges();
 ---
 
 ## 17. Cross-Process Communication
+
+### Editing the Active Scene
+
+In the Editor process, get the current `IEditor.IMyScene` from `Editor.sceneManager.activeScene`. Use `scene.rootNode2D`, `scene.rootNode3D`, or `scene.getSelection()` to find the target. If a command does asynchronous work before editing, capture `scene.sceneId` and verify that the scene is still active before applying the changes.
+
+`scene.createNode(type, props, parent)` creates the node. Attach it with `await scene.addNode(parent, node)`. To set its initial position, pass `transform.localPosition` in `props` for a 3D node or `x` and `y` for a 2D node.
+
+```ts
+async function addNodeAtPosition(name: string, x: number, y: number, z: number) {
+    const scene = Editor.sceneManager.activeScene;
+    const parent = scene?.rootNode3D;
+    if (!scene || !parent) throw new Error("No active scene with a 3D root");
+
+    const node = await scene.createNode("Sprite3D", {
+        name,
+        transform: { localPosition: { _$type: "Vector3", x, y, z } },
+    }, parent);
+    if (!node) throw new Error("Node creation failed");
+
+    await scene.addNode(parent, node);
+    await scene.syncNode(node);
+    const position = node.props.transform.localPosition;
+    return { nodeId: node.id, localPosition: { x: position.x, y: position.y, z: position.z } };
+}
+```
+
+For an existing node, resolve its live ID with `scene.getNodeAsync(id)`. Call `await scene.syncNode(node)` before reading or editing `node.props`. Use `await scene.addComponent(node, type, props)` to attach a component. For values passed in `props`, follow the component's serialized field names and asset-reference format.
+
+To persist an edit to the scene asset, call `await Editor.sceneManager.saveScene(scene.sceneId)`.
 
 ### UI -> Scene
 

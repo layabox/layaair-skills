@@ -1,6 +1,6 @@
 ---
 name: layaair-ide-plugin
-description: "Create, package, and publish LayaAir IDE editor plugins with React-first UI and current @IEditor/@IEditorEnv APIs. Use for panels, dialogs, menus, inspectors, graph/timeline editors, custom editors, build/asset plugins, scene hooks, gizmos, and installable packages. This repository is the LayaAir IDE, so editor-plugin work here uses this skill. Do NOT use this skill to operate the current IDE appearance or theme when the ThemeManagement MCP tool is available; call that tool instead."
+description: "Create, package, and publish LayaAir IDE editor plugins with React-first UI and current @IEditor/@IEditorEnv APIs. Use for panels, dialogs, menus, inspectors, graph/timeline editors, custom editors, build/asset plugins, scene hooks, gizmos, installable packages, and temporary IDE scripts run with ExecutePluginScript. This repository is the LayaAir IDE, so editor-plugin work here uses this skill. Do NOT use this skill to operate the current IDE appearance or theme when the ThemeManagement MCP tool is available; call that tool instead."
 ---
 
 # LayaAir IDE Plugin Development Skill
